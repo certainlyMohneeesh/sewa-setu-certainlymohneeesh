@@ -1,0 +1,12 @@
+# Test / development requirements (the production image uses app/requirements.txt only).
+#
+#   python3 -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt
+#   pytest
+-r app/requirements.txt
+
+pytest==8.3.3
+
+# Flask 2.2.5 only declares Werkzeug>=2.2.2; Werkzeug 3.x removes
+# `werkzeug.__version__`, which breaks Flask 2.2.5's test client.
+Werkzeug==2.2.3

@@ -11,3 +11,9 @@ logs/
 
 # Ignore macOS metadata fork files (prefixed with ._)
 ._*
+
+# Python / pytest caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
