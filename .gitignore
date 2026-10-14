@@ -1,0 +1,13 @@
+# Ignore the entire logs directory entirely
+logs/
+
+# Ignore log files specifically
+*.log
+
+# Ignore compressed log and archive variants
+*.log.gz
+*.tar.gz
+*.gz
+
+# Ignore macOS metadata fork files (prefixed with ._)
+._*
