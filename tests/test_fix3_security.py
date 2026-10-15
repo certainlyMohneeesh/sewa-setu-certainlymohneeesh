@@ -36,8 +36,8 @@ def admin_credentials():
     if not os.path.exists(path):
         pytest.fail("ASSESSOR_CREDENTIALS.md is missing")
     text = open(path, encoding="utf-8").read()
-    user = re.search(r"Username\D*`([^`]+)`", text)
-    password = re.search(r"Password\D*`([^`]+)`", text)
+    user = re.search(r"Username[^`\n]*`([^`]+)`", text)
+    password = re.search(r"Password[^`\n]*`([^`]+)`", text)
     assert user and password, "ASSESSOR_CREDENTIALS.md must list Username and Password in backticks"
     return user.group(1), password.group(1)
 
