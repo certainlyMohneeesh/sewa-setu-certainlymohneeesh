@@ -9,6 +9,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Acknowledgment slips need the bundled Noto fonts (Assamese/Bengali, Devanagari)
+# and the HarfBuzz shaping engine; fail the build early if either is missing.
+RUN test -s fonts/NotoSans-Regular.ttf -a -s fonts/NotoSansBengali-Regular.ttf \
+         -a -s fonts/NotoSansDevanagari-Regular.ttf \
+    && python -c "import uharfbuzz, fpdf"
+
 RUN mkdir -p /var/sewasetu/uploads /var/log/sewasetu \
     && crontab /app/deploy/crontab
 

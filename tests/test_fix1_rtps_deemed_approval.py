@@ -11,14 +11,13 @@ app/schema.sql, so the seeded production data is never modified.
 """
 
 import http.server
+import io
 import json
 import os
-import re
 import subprocess
 import sys
 import threading
 import uuid
-import zlib
 from datetime import datetime, timedelta
 
 import pytest
@@ -34,15 +33,9 @@ SLA_DAYS = 15
 # ---------------------------------------------------------------------------
 
 def pdf_text(data):
-    """Concatenated text drawn in a (possibly Flate-compressed) PDF."""
-    chunks = []
-    for raw in re.findall(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
-        try:
-            raw = zlib.decompress(raw)
-        except zlib.error:
-            pass
-        chunks.extend(re.findall(rb"\((.*?)\) Tj", raw))
-    return b" ".join(chunks).decode("latin-1")
+    """Text of a PDF as a reader would see it (fonts are embedded subsets)."""
+    from pypdf import PdfReader
+    return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(data)).pages)
 
 
 def login(client, citizen):

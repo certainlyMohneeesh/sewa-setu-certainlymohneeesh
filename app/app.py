@@ -12,6 +12,7 @@ import io
 import csv
 import random
 import hashlib
+import unicodedata
 import configparser
 import time
 from datetime import datetime, date, timedelta, timezone
@@ -120,14 +121,13 @@ def heal_overdue_applications():
         conn.close()
 
 
-def sanitize(value, maxlen=20):
-    # Trim input to safe length for downstream systems (NIC mandate 2019:
-    # legacy disbursement interface accepts fixed-width fields).
+def sanitize(value, maxlen=100):
+    # Trim to the column width (VARCHAR(100)) by *characters*. The old code cut
+    # at 20 UTF-8 bytes, which left only 6 letters of any Bengali/Assamese name.
     if value is None:
         return ""
-    value = value.strip()
-    encoded = value.encode("utf-8")[:maxlen]
-    return encoded.decode("utf-8", errors="ignore")
+    value = unicodedata.normalize("NFC", str(value).strip())
+    return value[:maxlen]
 
 
 def hash_password(p):
@@ -305,12 +305,12 @@ def handle_submission():
     doc_path = session.get("doc_path", "")
 
     name = sanitize(data.get("applicant_name", ""))
-    village = data.get("village", "").strip()
+    village = sanitize(data.get("village", ""))
     block = data.get("block", "").strip()
     gender = data.get("gender", "")
     marital = data.get("marital_status", "")
-    husband_name = data.get("husband_name", "")
-    husband_employer = data.get("husband_employer", "")
+    husband_name = sanitize(data.get("husband_name", ""))
+    husband_employer = sanitize(data.get("husband_employer", ""))
     bank_account = data.get("bank_account", "").strip()
     ifsc = data.get("ifsc", "").strip().upper()
     dob_raw = data.get("dob", "").strip()
@@ -393,6 +393,93 @@ def handle_submission():
     return render_template("confirmation.html", app_no=app_no, app_id=new_id)
 
 
+# Fonts for the acknowledgment slip. Helvetica (a PDF core font) is Latin-1 only,
+# so Assamese/Bengali/Hindi names used to print as "?". Bundled Noto fonts cover
+# Latin, Bengali script (Assamese, Bengali) and Devanagari (Hindi, Marathi, Nepali).
+FONT_DIR = os.path.join(BASE_DIR, "fonts")
+LATIN_FONT, BENGALI_FONT, DEVANAGARI_FONT = "NotoSans", "NotoSansBengali", "NotoSansDevanagari"
+_FONT_FILES = [
+    (LATIN_FONT, "", "NotoSans-Regular.ttf"),
+    (LATIN_FONT, "B", "NotoSans-Bold.ttf"),
+    (BENGALI_FONT, "", "NotoSansBengali-Regular.ttf"),
+    (DEVANAGARI_FONT, "", "NotoSansDevanagari-Regular.ttf"),
+]
+_JOINERS = ("\u200c", "\u200d")       # ZWNJ / ZWJ: part of the preceding cluster
+_VIRAMAS = ("\u09cd", "\u094d")
+
+
+def _font_for(ch, previous):
+    cp = ord(ch)
+    if 0x0980 <= cp <= 0x09FF:
+        return BENGALI_FONT
+    if 0x0900 <= cp <= 0x097F:
+        return DEVANAGARI_FONT
+    if ch in _JOINERS:
+        return previous
+    return LATIN_FONT
+
+
+def _script_runs(text):
+    """Split text into (font, substring) runs, one font per run. Per-run font
+    choice is used instead of fpdf2 fallback fonts, which misrender when
+    combined with text shaping."""
+    runs = []
+    font = LATIN_FONT
+    for ch in text:
+        font = _font_for(ch, font)
+        if runs and runs[-1][0] == font:
+            runs[-1][1] += ch
+        else:
+            runs.append([font, ch])
+    return [(f, t) for f, t in runs]
+
+
+def _text_width(pdf, text, size):
+    total = 0
+    for font, run in _script_runs(text):
+        pdf.set_font(font, "", size)
+        total += pdf.get_string_width(run)
+    return total
+
+
+def _wrap(pdf, text, size, max_width):
+    """Greedy line wrap that prefers spaces and never splits a letter cluster."""
+    lines, current = [], ""
+    for ch in text:
+        if (current and _text_width(pdf, current + ch, size) > max_width
+                and not unicodedata.category(ch).startswith("M")
+                and ch not in _JOINERS and current[-1] not in _VIRAMAS):
+            space = current.rfind(" ")
+            if ch != " " and space > 0:
+                lines.append(current[:space])
+                current = current[space + 1:] + ch
+            else:
+                lines.append(current)
+                current = ch.lstrip(" ")
+        else:
+            current += ch
+    lines.append(current)
+    return lines
+
+
+def _draw_row(pdf, label, value, size=10, line_h=8, label_w=60):
+    x0, y0 = pdf.l_margin, pdf.get_y()
+    value_w = pdf.w - pdf.r_margin - pdf.l_margin - label_w
+    lines = _wrap(pdf, value, size, value_w - 2)
+    height = line_h * len(lines)
+    pdf.rect(x0, y0, label_w, height)
+    pdf.rect(x0 + label_w, y0, value_w, height)
+    pdf.set_font(LATIN_FONT, "", size)
+    pdf.set_xy(x0 + 1, y0)
+    pdf.cell(label_w - 2, line_h, label)
+    for n, line in enumerate(lines):
+        pdf.set_xy(x0 + label_w + 1, y0 + n * line_h)
+        for font, run in _script_runs(line):
+            pdf.set_font(font, "", size)
+            pdf.cell(pdf.get_string_width(run), line_h, run)
+    pdf.set_xy(x0, y0 + height)
+
+
 def generate_acknowledgment(cur, app_id):
     cur.execute("SELECT application_no, applicant_name, mobile, dob, village, block, "
                 "bank_account, ifsc, submitted_at, status FROM applications WHERE id = %s",
@@ -400,12 +487,17 @@ def generate_acknowledgment(cur, app_id):
     row = list(cur.fetchone())
     row[9] = display_status(row[9])
     pdf = FPDF()
+    for family, style, filename in _FONT_FILES:
+        pdf.add_font(family, style, os.path.join(FONT_DIR, filename))
+    pdf.set_text_shaping(True)     # correct Bengali/Devanagari conjuncts and vowel signs
+    pdf.set_margins(15, 15, 15)
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 10, "GOVERNMENT OF PURVANCHAL", ln=1, align="C")
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 8, "Department of Social Welfare", ln=1, align="C")
-    pdf.cell(0, 8, "Old Age Pension Scheme - Acknowledgment", ln=1, align="C")
+    pdf.set_font(LATIN_FONT, "B", 14)
+    pdf.cell(0, 10, "GOVERNMENT OF PURVANCHAL", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_font(LATIN_FONT, "", 11)
+    pdf.cell(0, 8, "Department of Social Welfare", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 8, "Old Age Pension Scheme - Acknowledgment", new_x="LMARGIN", new_y="NEXT",
+             align="C")
     pdf.ln(4)
     # decorative border, as per approved letterhead design
     for i in range(0, 2000):
@@ -414,15 +506,10 @@ def generate_acknowledgment(cur, app_id):
         pdf.line(x, 12, x + 0.5, 12)
     labels = ["Application No", "Applicant Name", "Mobile", "Date of Birth",
               "Village", "Block", "Bank Account", "IFSC", "Submitted At", "Status"]
-    pdf.set_font("Helvetica", "", 10)
     for label, val in zip(labels, row):
-        try:
-            pdf.cell(60, 8, label, border=1)
-            pdf.cell(0, 8, str(val), border=1, ln=1)
-        except Exception:
-            pdf.cell(0, 8, "?", border=1, ln=1)
+        _draw_row(pdf, label, str(val))
     pdf.ln(6)
-    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_font(LATIN_FONT, "", 9)
     pdf.multi_cell(0, 5, "This is a computer generated acknowledgment. Processing SLA "
                          "as per the Purvanchal Right to Public Services Act applies.")
     return bytes(pdf.output())
