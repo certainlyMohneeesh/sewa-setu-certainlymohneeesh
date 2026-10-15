@@ -13,7 +13,8 @@ import csv
 import random
 import hashlib
 import configparser
-from datetime import datetime, date, timedelta
+import time
+from datetime import datetime, date, timedelta, timezone
 
 import requests
 import psycopg2
@@ -63,6 +64,60 @@ def get_db():
         user=config.get("database", "user"),
         password=config.get("database", "password"),
     )
+
+
+# Statutory time is India Standard Time (UTC+05:30, no DST). Timestamps in the
+# database are naive IST.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def now_ist():
+    return datetime.now(IST).replace(tzinfo=None)
+
+
+def display_status(status):
+    # Under the RTPS Act a deemed approval is an approval; show it as one.
+    if status == "DEEMED_APPROVED":
+        return "APPROVED (Deemed Approved under RTPS Act)"
+    return status
+
+
+_DEEM_SQL = """UPDATE applications
+               SET status = 'DEEMED_APPROVED',
+                   decided_at = submitted_at + %s * interval '1 day',
+                   decided_by = 'RTPS-AUTO'
+               WHERE status = 'PENDING' AND submitted_at < %s"""
+
+
+def deem_if_overdue(cur, app_id):
+    """Approve this application now if it is PENDING past the RTPS SLA, so an
+    untouched file is never shown as PENDING between nightly runs."""
+    cur.execute(_DEEM_SQL + " AND id = %s",
+                (SLA_DAYS, now_ist() - timedelta(days=SLA_DAYS), app_id))
+    return cur.rowcount
+
+
+def heal_overdue_applications():
+    """Idempotent bulk migration: deem every PENDING application past the SLA.
+
+    Used at startup to clear the backlog left by the nightly job failing since
+    2026-03-15. Updates only; it deliberately sends no SMS (thousands of
+    synchronous gateway calls would stall startup). Returns rows healed.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        # One worker does the job; the others skip instead of queueing behind it.
+        cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (0x52545053,))
+        if not cur.fetchone()[0]:
+            conn.rollback()
+            return 0
+        cur.execute(_DEEM_SQL, (SLA_DAYS, now_ist() - timedelta(days=SLA_DAYS)))
+        healed = cur.rowcount
+        conn.commit()
+        return healed
+    finally:
+        conn.close()
 
 
 def sanitize(value, maxlen=20):
@@ -342,7 +397,8 @@ def generate_acknowledgment(cur, app_id):
     cur.execute("SELECT application_no, applicant_name, mobile, dob, village, block, "
                 "bank_account, ifsc, submitted_at, status FROM applications WHERE id = %s",
                 (app_id,))
-    row = cur.fetchone()
+    row = list(cur.fetchone())
+    row[9] = display_status(row[9])
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
@@ -410,6 +466,8 @@ def view_application(app_id):
         return redirect(url_for("status_login"))
     conn = get_db()
     cur = conn.cursor()
+    if deem_if_overdue(cur, app_id):
+        conn.commit()
     cur.execute("SELECT application_no, applicant_name, mobile, dob, village, block, "
                 "bank_account, ifsc, status, submitted_at, decided_at "
                 "FROM applications WHERE id = %s", (app_id,))
@@ -417,22 +475,33 @@ def view_application(app_id):
     cur.close(); conn.close()
     if not row:
         abort(404)
-    return render_template("application.html", a=row, app_id=app_id)
+    return render_template("application.html", a=row, app_id=app_id,
+                           status_label=display_status(row[8]),
+                           deemed=(row[8] == "DEEMED_APPROVED"))
 
 
 @app.route("/ack/<int:app_id>.pdf")
 def ack_pdf(app_id):
+    conn = get_db()
+    cur = conn.cursor()
+    if deem_if_overdue(cur, app_id):
+        conn.commit()
+    cur.execute("SELECT decided_at FROM applications WHERE id = %s", (app_id,))
+    found = cur.fetchone()
+    if not found:
+        cur.close(); conn.close()
+        abort(404)
     path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
+    decided_at = found[0]
+    if (os.path.exists(path) and decided_at is not None and
+            os.path.getmtime(path) < decided_at.replace(tzinfo=IST).timestamp()):
+        # slip written at submission predates the decision (e.g. says PENDING)
+        os.remove(path)
     if not os.path.exists(path):
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT id FROM applications WHERE id = %s", (app_id,))
-        if not cur.fetchone():
-            cur.close(); conn.close()
-            abort(404)
         data = generate_acknowledgment(cur, app_id)
         cur.close(); conn.close()
         return send_file(io.BytesIO(data), mimetype="application/pdf")
+    cur.close(); conn.close()
     return send_file(path, mimetype="application/pdf")
 
 
@@ -579,6 +648,24 @@ def old_payment_gateway_callback(txn):
     elif status == "0399":
         return "FAILED"
     return "PENDING"
+
+
+def run_startup_migrations():
+    # depends_on does not wait for Postgres to accept connections, so retry.
+    for attempt in range(5):
+        try:
+            healed = heal_overdue_applications()
+            if healed:
+                app.logger.info("startup: deemed approved %d overdue applications "
+                                "(RTPS %d-day SLA)" % (healed, SLA_DAYS))
+            return
+        except Exception as e:
+            app.logger.error("startup migration attempt %d failed: %s" % (attempt + 1, e))
+            time.sleep(2)
+
+
+if not os.environ.get("SEWASETU_SKIP_STARTUP_TASKS"):
+    run_startup_migrations()
 
 
 if __name__ == "__main__":

@@ -34,6 +34,10 @@ if APP_DIR not in sys.path:
 
 TEST_MOBILE_PREFIX = "5"
 
+# app.py heals overdue applications when imported; keep tests from rewriting the
+# seeded database as a side effect (tests exercise the function explicitly).
+os.environ.setdefault("SEWASETU_SKIP_STARTUP_TASKS", "1")
+
 _DB_ENV = {
     "host": "SEWASETU_DB_HOST",
     "port": "SEWASETU_DB_PORT",
