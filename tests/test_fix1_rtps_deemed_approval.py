@@ -17,14 +17,12 @@ import os
 import subprocess
 import sys
 import threading
-import uuid
 from datetime import datetime, timedelta
 
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "app", "scripts", "deemed_approval.py")
-SCHEMA = os.path.join(ROOT, "app", "schema.sql")
 SLA_DAYS = 15
 
 
@@ -52,32 +50,6 @@ def row(app_module, app_id):
     result = cur.fetchone()
     conn.close()
     return result
-
-
-@pytest.fixture
-def scratch_db(app_module):
-    """Empty database with the production schema; app.get_db() and the
-    SEWASETU_DB_NAME env var (inherited by subprocesses) point at it."""
-    name = "sewasetu_rtps_%s" % uuid.uuid4().hex[:10]
-    admin = app_module.get_db()
-    admin.autocommit = True
-    admin.cursor().execute('CREATE DATABASE "%s"' % name)
-    previous = os.environ.get("SEWASETU_DB_NAME")
-    os.environ["SEWASETU_DB_NAME"] = name
-    try:
-        conn = app_module.get_db()
-        with open(SCHEMA, encoding="utf-8") as fh:
-            conn.cursor().execute(fh.read())
-        conn.commit()
-        yield conn
-        conn.close()
-    finally:
-        if previous is None:
-            os.environ.pop("SEWASETU_DB_NAME", None)
-        else:
-            os.environ["SEWASETU_DB_NAME"] = previous
-        admin.cursor().execute('DROP DATABASE IF EXISTS "%s" WITH (FORCE)' % name)
-        admin.close()
 
 
 def insert(conn, mobile, days_old, status="PENDING", decided_by=None):

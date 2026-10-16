@@ -23,6 +23,7 @@ import os
 import random
 import secrets
 import sys
+import uuid
 from datetime import datetime, timedelta
 
 import psycopg2
@@ -34,6 +35,7 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 TEST_MOBILE_PREFIX = "5"
+SCHEMA_SQL = os.path.join(APP_DIR, "schema.sql")
 
 # Credentials the app reads from the environment. The suite generates throw-away
 # values per run, so no real secret is ever needed (or written) in the repository.
@@ -102,6 +104,32 @@ def _database_available(app_module):
     if count < 100000:
         pytest.exit("Database is not the seeded production dump (%d applications "
                     "found, expected ~100,000)." % count, returncode=2)
+
+
+@pytest.fixture
+def scratch_db(app_module):
+    """Empty database with the production schema; app.get_db() and the
+    SEWASETU_DB_NAME env var (inherited by subprocesses) point at it."""
+    name = "sewasetu_scratch_%s" % uuid.uuid4().hex[:10]
+    admin = app_module.get_db()
+    admin.autocommit = True
+    admin.cursor().execute('CREATE DATABASE "%s"' % name)
+    previous = os.environ.get("SEWASETU_DB_NAME")
+    os.environ["SEWASETU_DB_NAME"] = name
+    try:
+        conn = app_module.get_db()
+        with open(SCHEMA_SQL, encoding="utf-8") as fh:
+            conn.cursor().execute(fh.read())
+        conn.commit()
+        yield conn
+        conn.close()
+    finally:
+        if previous is None:
+            os.environ.pop("SEWASETU_DB_NAME", None)
+        else:
+            os.environ["SEWASETU_DB_NAME"] = previous
+        admin.cursor().execute('DROP DATABASE IF EXISTS "%s" WITH (FORCE)' % name)
+        admin.close()
 
 
 @pytest.fixture
