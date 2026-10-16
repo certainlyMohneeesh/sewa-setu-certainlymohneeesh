@@ -4,7 +4,8 @@ services:
     environment:
       POSTGRES_DB: sewasetu
       POSTGRES_USER: sewasetu
-      POSTGRES_PASSWORD: sewasetu123
+      # secrets come from the untracked .env file; create it with scripts/gen-env.sh
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?missing - run: sh scripts/gen-env.sh}"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./app/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -14,6 +15,11 @@ services:
     build: ./app
     ports:
       - "8000:8000"
+    environment:
+      SEWASETU_DB_PASSWORD: "${POSTGRES_PASSWORD:?missing - run: sh scripts/gen-env.sh}"
+      SECRET_KEY: "${SECRET_KEY:?missing - run: sh scripts/gen-env.sh}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-swd-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?missing - run: sh scripts/gen-env.sh}"
     depends_on:
       - db
       - smsgw
@@ -23,7 +29,9 @@ services:
 
   scheduler:
     build: ./app
-    command: ["cron", "-f"]
+    command: ["sh", "/app/deploy/scheduler-entrypoint.sh"]
+    environment:
+      SEWASETU_DB_PASSWORD: "${POSTGRES_PASSWORD:?missing - run: sh scripts/gen-env.sh}"
     depends_on:
       - db
     volumes:

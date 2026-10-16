@@ -105,8 +105,8 @@ What the **nginx log** shows (1,515,987 requests, Jan–Jun 2026):
 (any unauthenticated client can download any applicant's PII by id), which matches the DC's
 rumour of calls/visits after applying. Do not claim an identified attacker in the Loom.
 
-Other security facts found in the code (all unfixed): hard-coded admin `admin` / `sewasetu@123`
-(`app.py:36-37`); `secret_key = ssp-prod-key-2023-donotshare` in `config/app.ini`;
+Other security facts found in the code (all unfixed): a hard-coded admin username and password
+(`app.py:36-37`) and a hard-coded session `secret_key` in `config/app.ini` (both since rotated; values deliberately not repeated here);
 `/admin/approve|reject/<id>` check `session["logged_in"]` (any citizen) instead of
 `session["admin"]` and leave `decided_by` NULL; SQL injection via `%` formatting in
 `/status/reset` (`app.py:446,449`); upload path built from the raw client filename.

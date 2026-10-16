@@ -41,15 +41,15 @@ def _setting(env_name, section, option):
 app = Flask(__name__)
 app.secret_key = _setting("SECRET_KEY", "app", "secret_key")
 if len(app.secret_key) < 32:
-    raise RuntimeError("SECRET_KEY must be set (environment or config/app.ini) "
-                       "and at least 32 characters long")
+    raise RuntimeError("SECRET_KEY environment variable must be set to a random "
+                       "string of at least 32 characters (see scripts/gen-env.sh)")
 app.config["PERMANENT_SESSION_LIFETIME"] = 300
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"     # blocks cross-site POSTs (CSRF)
 
 ADMIN_USERNAME = _setting("ADMIN_USERNAME", "admin", "username")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")             # optional plaintext override
-ADMIN_PASSWORD_HASH = config.get("admin", "password_hash", fallback="")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")             # plaintext, or use the hash below
+ADMIN_PASSWORD_HASH = _setting("ADMIN_PASSWORD_HASH", "admin", "password_hash")
 
 SMS_GATEWAY_URL = config.get("app", "sms_gateway_url")
 OTP_VALIDITY_SECONDS = config.getint("app", "otp_validity_seconds")
@@ -73,14 +73,22 @@ except Exception:
     pass
 
 
+def db_connection_args():
+    """Connection settings. Host/port/name/user have defaults in config/app.ini;
+    the password is a secret and only ever comes from the environment
+    (SEWASETU_DB_PASSWORD). Read per call so tests and tools can redirect it."""
+    def pick(env_name, option):
+        return os.environ.get(env_name) or config.get("database", option, fallback="")
+
+    return dict(host=pick("SEWASETU_DB_HOST", "host"),
+                port=pick("SEWASETU_DB_PORT", "port"),
+                dbname=pick("SEWASETU_DB_NAME", "name"),
+                user=pick("SEWASETU_DB_USER", "user"),
+                password=pick("SEWASETU_DB_PASSWORD", "password"))
+
+
 def get_db():
-    return psycopg2.connect(
-        host=config.get("database", "host"),
-        port=config.get("database", "port"),
-        dbname=config.get("database", "name"),
-        user=config.get("database", "user"),
-        password=config.get("database", "password"),
-    )
+    return psycopg2.connect(**db_connection_args())
 
 
 # Statutory time is India Standard Time (UTC+05:30, no DST). Timestamps in the

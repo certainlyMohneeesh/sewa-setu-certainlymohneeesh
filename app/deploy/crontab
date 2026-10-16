@@ -1,3 +1,3 @@
 # Sewa Setu scheduled jobs
 PATH=/usr/local/bin:/usr/bin:/bin
-0 2 * * * python /app/scripts/deemed_approval.py >> /var/log/sewasetu/cron.log 2>&1
+0 2 * * * [ -r /etc/sewasetu.env ] && . /etc/sewasetu.env; python /app/scripts/deemed_approval.py >> /var/log/sewasetu/cron.log 2>&1

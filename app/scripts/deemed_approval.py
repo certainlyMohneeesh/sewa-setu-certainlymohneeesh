@@ -47,7 +47,8 @@ def now_ist():
 
 
 def db_setting(env_name, option):
-    return os.environ.get(env_name) or config.get("database", option)
+    # the password is only ever supplied through SEWASETU_DB_PASSWORD
+    return os.environ.get(env_name) or config.get("database", option, fallback="")
 
 
 def main():
