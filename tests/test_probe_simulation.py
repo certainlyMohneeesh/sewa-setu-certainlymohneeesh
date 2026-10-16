@@ -31,8 +31,8 @@ import requests
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = os.environ.get("PROBE_BASE_URL", "http://localhost:8000").rstrip("/")
 MB = 1024 * 1024
-TOKEN = "PROBE_TOKEN_%d" % random.randint(100, 999)
-ASSAMESE_NAME = "কমলাকান্ত ভট্টাচাৰ্য — " + TOKEN
+MARKER = "PROBE_TOKEN_%d" % random.randint(100, 999)
+ASSAMESE_NAME = "কমলাকান্ত ভট্টাচাৰ্য — " + MARKER
 
 # The vendor's login and signing key leaked in the original repository; both must
 # be dead on the live site.
@@ -70,6 +70,21 @@ def _stack_is_up():
         requests.get(BASE + "/", timeout=5)
     except requests.RequestException as exc:
         pytest.skip("no deployment reachable at %s (%s)" % (BASE, exc))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _remove_probe_citizens():
+    """Best effort: delete the citizens this module created (mobiles starting with 5)
+    from the docker-compose database, so the shared test database stays clean."""
+    yield
+    sql = ("DELETE FROM applications WHERE mobile LIKE '5%'; "
+           "DELETE FROM portal_users WHERE mobile LIKE '5%'; "
+           "DELETE FROM otps WHERE mobile LIKE '5%';")
+    try:
+        subprocess.run(["docker", "compose", "exec", "-T", "db", "psql", "-q", "-U", "sewasetu",
+                        "-d", "sewasetu", "-c", sql], cwd=ROOT, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 # --------------------------------------------------------------------------- helpers
@@ -350,7 +365,7 @@ def test_indic_name_round_trips_and_acknowledgment_is_a_real_pdf():
     from pypdf import PdfReader
     text = "".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(
         citizen.get("/ack/%d.pdf" % app_id).content)).pages)
-    assert TOKEN in text and "????" not in text
+    assert MARKER in text and "????" not in text
 
 
 def test_otp_and_confirmation_sms_arrive_through_the_gateway():
