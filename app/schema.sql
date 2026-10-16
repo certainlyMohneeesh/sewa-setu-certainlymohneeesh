@@ -35,3 +35,12 @@ CREATE TABLE IF NOT EXISTS otps (
     code       VARCHAR(6),
     created_at TIMESTAMP
 );
+
+-- Indexes. The tables hold ~100,000 rows; without these every status login,
+-- duplicate-application check, admin queue and dashboard count scanned them all.
+-- app.py runs the same statements at start-up so an existing database gets them too.
+CREATE INDEX IF NOT EXISTS idx_applications_mobile ON applications (mobile);
+CREATE INDEX IF NOT EXISTS idx_applications_app_no ON applications (application_no);
+CREATE INDEX IF NOT EXISTS idx_applications_status_submitted ON applications (status, submitted_at ASC);
+CREATE INDEX IF NOT EXISTS idx_applications_status_block ON applications (status, block);
+CREATE INDEX IF NOT EXISTS idx_otps_mobile_id ON otps (mobile, id DESC);

@@ -1,6 +1,8 @@
 services:
   db:
     image: postgres:15
+    # 4 app workers x pool of 20 + the nightly job + headroom; the default is 100
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_DB: sewasetu
       POSTGRES_USER: sewasetu
@@ -10,6 +12,13 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./app/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ./seed/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+    healthcheck:
+      # TCP on purpose: during first-boot initialisation the temporary server only
+      # listens on the unix socket, so this turns healthy only once the seed is loaded
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U sewasetu -d sewasetu"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
 
   app:
     build: ./app
@@ -21,8 +30,10 @@ services:
       ADMIN_USERNAME: "${ADMIN_USERNAME:-swd-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:?missing - run: sh scripts/gen-env.sh}"
     depends_on:
-      - db
-      - smsgw
+      db:
+        condition: service_healthy
+      smsgw:
+        condition: service_started
     volumes:
       - uploads:/var/sewasetu/uploads
       - applogs:/var/log/sewasetu
@@ -33,7 +44,8 @@ services:
     environment:
       SEWASETU_DB_PASSWORD: "${POSTGRES_PASSWORD:?missing - run: sh scripts/gen-env.sh}"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - applogs:/var/log/sewasetu
 

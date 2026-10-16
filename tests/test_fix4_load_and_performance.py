@@ -128,19 +128,27 @@ def test_ensure_indexes_is_safe_when_every_worker_runs_it_at_once(app_module, sc
 
 
 def test_the_seeded_database_answers_lookups_from_the_indexes(app_module, db):
+    """With sequential scans disallowed the planner can only succeed if a suitable
+    index exists. (Without this, a nearly empty table such as otps is legitimately
+    scanned, so the plain plan depends on table statistics.)"""
     app_module.ensure_indexes()
     cur = db.cursor()
+    cur.execute("SET enable_seqscan = off")
 
     def plan(sql, *args):
         cur.execute("EXPLAIN " + sql, args)
         return "\n".join(r[0] for r in cur.fetchall())
 
-    assert "Seq Scan" not in plan("SELECT id FROM applications WHERE mobile = %s", "9861908220")
-    assert "Seq Scan" not in plan("SELECT 1 FROM applications WHERE application_no = %s", "SSP25825708")
-    assert "Seq Scan" not in plan(
-        "SELECT id FROM applications WHERE status = %s ORDER BY submitted_at LIMIT 50", "PENDING")
-    assert "Seq Scan" not in plan(
-        "SELECT code FROM otps WHERE mobile = %s ORDER BY id DESC LIMIT 1", "9861908220")
+    for sql, arg in [
+        ("SELECT id FROM applications WHERE mobile = %s", "9861908220"),
+        ("SELECT 1 FROM applications WHERE application_no = %s", "SSP25825708"),
+        ("SELECT id FROM applications WHERE status = %s ORDER BY submitted_at LIMIT 50", "PENDING"),
+        ("SELECT block, count(*) FROM applications WHERE status = %s GROUP BY block", "PENDING"),
+        ("SELECT code FROM otps WHERE mobile = %s ORDER BY id DESC LIMIT 1", "9861908220"),
+    ]:
+        text = plan(sql, arg)
+        assert "Seq Scan" not in text and "idx_" in text, "%s\n%s" % (sql, text)
+    db.rollback()
 
 
 # ---------------------------------------------------------------------------

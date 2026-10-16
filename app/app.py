@@ -10,9 +10,13 @@ Maintenance contract ended 31/01/2026.
 import os
 import io
 import csv
+import uuid
+import threading
+from contextlib import contextmanager
 import random
 import hashlib
 import hmac
+import re
 import unicodedata
 import configparser
 import time
@@ -20,6 +24,7 @@ from datetime import datetime, date, timedelta, timezone
 
 import requests
 import psycopg2
+import psycopg2.pool
 from flask import (Flask, request, session, redirect, url_for, render_template,
                    flash, send_file, abort, jsonify)
 from fpdf import FPDF
@@ -88,7 +93,132 @@ def db_connection_args():
 
 
 def get_db():
+    """A direct, unpooled connection. The caller must close it. Used by one-off
+    startup migrations and tools; request handlers use db_cursor() instead."""
     return psycopg2.connect(**db_connection_args())
+
+
+# ---------------------------------------------------------------------------
+# Connection pool
+#
+# Every call used to open a new Postgres connection and the error paths never
+# closed it, so at month-end (~17x traffic) connections leaked until Postgres
+# answered "sorry, too many clients already". Each worker process now owns one
+# small pool; a request borrows a connection for the shortest time possible and
+# always gives it back, whatever happens.
+# ---------------------------------------------------------------------------
+
+POOL_MIN = int(os.environ.get("SEWASETU_DB_POOL_MIN", 2))
+POOL_MAX = int(os.environ.get("SEWASETU_DB_POOL_MAX", 20))
+POOL_WAIT_SECONDS = float(os.environ.get("SEWASETU_DB_POOL_TIMEOUT", 10))
+
+
+class PoolBusy(Exception):
+    """No database connection became free in time; shed load instead of piling on."""
+
+
+class _BlockingPool(object):
+    # ThreadedConnectionPool raises immediately when exhausted; a semaphore makes
+    # callers wait their turn for a connection instead.
+    def __init__(self):
+        self.pid = os.getpid()
+        self._slots = threading.BoundedSemaphore(POOL_MAX)
+        self._pool = psycopg2.pool.ThreadedConnectionPool(
+            POOL_MIN, POOL_MAX, **db_connection_args())
+
+    def getconn(self):
+        if not self._slots.acquire(timeout=POOL_WAIT_SECONDS):
+            raise PoolBusy()
+        try:
+            return self._pool.getconn()
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def putconn(self, conn, close=False):
+        try:
+            self._pool.putconn(conn, close=close)    # rolls back an open transaction
+        finally:
+            self._slots.release()
+
+
+_pool_lock = threading.Lock()
+_pool_holder = {"pool": None}
+
+
+def _get_pool():
+    pool = _pool_holder["pool"]
+    if pool is None or pool.pid != os.getpid():      # never share a pool across fork()
+        with _pool_lock:
+            pool = _pool_holder["pool"]
+            if pool is None or pool.pid != os.getpid():
+                pool = _pool_holder["pool"] = _BlockingPool()
+    return pool
+
+
+@contextmanager
+def db_conn():
+    pool = _get_pool()
+    conn = pool.getconn()
+    discard = False
+    try:
+        yield conn
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        discard = True                                # connection is probably dead
+        raise
+    except BaseException:
+        if not conn.closed:
+            conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn, close=discard or conn.closed != 0)
+
+
+@contextmanager
+def db_cursor():
+    """Cursor on a pooled connection. Commit explicitly with cur.connection.commit();
+    anything uncommitted is rolled back, and the connection always goes back."""
+    with db_conn() as conn:
+        cur = conn.cursor()
+        try:
+            yield cur
+        finally:
+            cur.close()
+
+
+@app.errorhandler(PoolBusy)
+def _pool_busy(error):
+    app.logger.error("database pool exhausted: no connection free after %.0fs"
+                     % POOL_WAIT_SECONDS)
+    return ("The service is very busy right now. Please try again in a minute.", 503,
+            {"Retry-After": "10", "Content-Type": "text/plain; charset=utf-8"})
+
+
+# Indexes: the 100,000-row tables had only primary keys, so every login, duplicate
+# check, admin queue and dashboard count scanned the whole table. Also in schema.sql
+# for new databases; applied here (idempotently) to the existing production one.
+INDEX_STATEMENTS = [
+    "CREATE INDEX IF NOT EXISTS idx_applications_mobile ON applications (mobile)",
+    "CREATE INDEX IF NOT EXISTS idx_applications_app_no ON applications (application_no)",
+    "CREATE INDEX IF NOT EXISTS idx_applications_status_submitted "
+    "ON applications (status, submitted_at ASC)",
+    "CREATE INDEX IF NOT EXISTS idx_applications_status_block ON applications (status, block)",
+    "CREATE INDEX IF NOT EXISTS idx_otps_mobile_id ON otps (mobile, id DESC)",
+]
+
+
+def ensure_indexes():
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        # Every gunicorn worker runs this at start-up; a blocking advisory lock makes
+        # the others wait, then find the indexes already there.
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (0x52545031,))
+        for statement in INDEX_STATEMENTS:
+            cur.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # Statutory time is India Standard Time (UTC+05:30, no DST). Timestamps in the
@@ -253,12 +383,10 @@ def apply():
             flash("Something went wrong. Please try again.")
             return render_template("apply.html", captcha_q=make_captcha())
         code = str(random.randint(100000, 999999))
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("INSERT INTO otps (mobile, code, created_at) VALUES (%s, %s, %s)",
-                    (mobile, code, datetime.now()))
-        conn.commit()
-        cur.close(); conn.close()
+        with db_cursor() as cur:
+            cur.execute("INSERT INTO otps (mobile, code, created_at) VALUES (%s, %s, %s)",
+                        (mobile, code, datetime.now()))
+            cur.connection.commit()
         send_sms(mobile, "Your Sewa Setu OTP is %s. Valid for 5 minutes." % code)
         session.permanent = True
         session["apply_mobile"] = mobile
@@ -279,12 +407,10 @@ def verify():
         return redirect(url_for("apply"))
     if request.method == "POST":
         code = request.form.get("otp", "").strip()
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT code, created_at FROM otps WHERE mobile = %s "
-                    "ORDER BY id DESC LIMIT 1", (mobile,))
-        row = cur.fetchone()
-        cur.close(); conn.close()
+        with db_cursor() as cur:
+            cur.execute("SELECT code, created_at FROM otps WHERE mobile = %s "
+                        "ORDER BY id DESC LIMIT 1", (mobile,))
+            row = cur.fetchone()
         if row and row[0] == code:
             age = (datetime.now() - row[1]).total_seconds()
             if age > OTP_VALIDITY_SECONDS:
@@ -404,45 +530,43 @@ def handle_submission():
         flash("The application deadline has passed.")
         return redirect(url_for("index"))
 
-    conn = get_db()
-    cur = conn.cursor()
+    with db_cursor() as cur:
+        cur.execute("SELECT count(*) FROM applications WHERE mobile = %s", (mobile,))
+        if cur.fetchone()[0] > 0:
+            flash("An application already exists for this mobile number. "
+                  "Duplicate applications are not permitted.")
+            return redirect(url_for("index"))
 
-    cur.execute("SELECT count(*) FROM applications WHERE mobile = %s", (mobile,))
-    if cur.fetchone()[0] > 0:
-        cur.close(); conn.close()
-        flash("An application already exists for this mobile number. "
-              "Duplicate applications are not permitted.")
-        return redirect(url_for("index"))
+        app_no = new_application_no()
+        cur.execute(
+            """INSERT INTO applications
+               (application_no, applicant_name, mobile, dob, gender, marital_status,
+                husband_name, husband_employer, village, block, bank_account, ifsc,
+                doc_path, status, submitted_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
+               RETURNING id""",
+            (app_no, name, mobile, dob, gender, marital, husband_name,
+             husband_employer, village, block, bank_account, ifsc, doc_path,
+             datetime.now()))
+        new_id = cur.fetchone()[0]
 
-    app_no = new_application_no()
-    cur.execute(
-        """INSERT INTO applications
-           (application_no, applicant_name, mobile, dob, gender, marital_status,
-            husband_name, husband_employer, village, block, bank_account, ifsc,
-            doc_path, status, submitted_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
-           RETURNING id""",
-        (app_no, name, mobile, dob, gender, marital, husband_name,
-         husband_employer, village, block, bank_account, ifsc, doc_path,
-         datetime.now()))
-    new_id = cur.fetchone()[0]
+        # status portal account; password is DOB as DDMMYYYY per dept. circular
+        portal_pass = dob.strftime("%d%m%Y")
+        cur.execute("SELECT count(*) FROM portal_users WHERE mobile = %s", (mobile,))
+        if cur.fetchone()[0] == 0:
+            cur.execute("INSERT INTO portal_users (mobile, password_hash) VALUES (%s,%s)",
+                        (mobile, hash_password(portal_pass)))
+        cur.connection.commit()
+        slip_row = fetch_acknowledgment_row(cur, new_id)
 
-    # status portal account; password is DOB as DDMMYYYY per dept. circular
-    portal_pass = dob.strftime("%d%m%Y")
-    cur.execute("SELECT count(*) FROM portal_users WHERE mobile = %s", (mobile,))
-    if cur.fetchone()[0] == 0:
-        cur.execute("INSERT INTO portal_users (mobile, password_hash) VALUES (%s,%s)",
-                    (mobile, hash_password(portal_pass)))
-    conn.commit()
+    # The application is saved. Draw and cache the slip after the database
+    # connection has been returned; if drawing fails it is rebuilt on first download.
+    try:
+        app.logger.info("generating acknowledgment pdf application=%d" % new_id)
+        save_acknowledgment(new_id, render_acknowledgment(slip_row))
+    except Exception as e:
+        app.logger.error("acknowledgment pdf for application=%d failed: %s" % (new_id, e))
 
-    app.logger.info("generating acknowledgment pdf application=%d" % new_id)
-    pdf_bytes = generate_acknowledgment(cur, new_id)
-    ack_dir = os.path.join(UPLOAD_DIR, "ack")
-    os.makedirs(ack_dir, exist_ok=True)
-    with open(os.path.join(ack_dir, "%d.pdf" % new_id), "wb") as out:
-        out.write(pdf_bytes)
-
-    cur.close(); conn.close()
     session.pop("form_data", None)
     session.pop("doc_path", None)
     session.pop("verified_mobile", None)
@@ -452,19 +576,28 @@ def handle_submission():
     return render_template("confirmation.html", app_no=app_no, app_id=new_id)
 
 
-# Fonts for the acknowledgment slip. Helvetica (a PDF core font) is Latin-1 only,
-# so Assamese/Bengali/Hindi names used to print as "?". Bundled Noto fonts cover
-# Latin, Bengali script (Assamese, Bengali) and Devanagari (Hindi, Marathi, Nepali).
+# Acknowledgment slip -------------------------------------------------------
+#
+# Latin text uses the PDF core font Helvetica (built in: no file to parse or
+# subset). A bundled Noto font is loaded only when the text needs it: Bengali
+# script (Assamese, Bengali) and Devanagari (Hindi, Marathi, Nepali) each have
+# their own font, and Noto Sans covers any other character Helvetica lacks.
+# Loading and subsetting fonts is what takes time, so a slip only pays for the
+# scripts it actually contains. (The core fonts alone are Latin-1 only, which is
+# why Assamese names used to print as "?".)
 FONT_DIR = os.path.join(BASE_DIR, "fonts")
-LATIN_FONT, BENGALI_FONT, DEVANAGARI_FONT = "NotoSans", "NotoSansBengali", "NotoSansDevanagari"
-_FONT_FILES = [
-    (LATIN_FONT, "", "NotoSans-Regular.ttf"),
-    (LATIN_FONT, "B", "NotoSans-Bold.ttf"),
-    (BENGALI_FONT, "", "NotoSansBengali-Regular.ttf"),
-    (DEVANAGARI_FONT, "", "NotoSansDevanagari-Regular.ttf"),
-]
+CORE_FONT, LATIN_FONT = "helvetica", "NotoSans"
+BENGALI_FONT, DEVANAGARI_FONT = "NotoSansBengali", "NotoSansDevanagari"
+_FONT_FILES = {
+    LATIN_FONT: "NotoSans-Regular.ttf",
+    BENGALI_FONT: "NotoSansBengali-Regular.ttf",
+    DEVANAGARI_FONT: "NotoSansDevanagari-Regular.ttf",
+}
 _JOINERS = ("\u200c", "\u200d")       # ZWNJ / ZWJ: part of the preceding cluster
 _VIRAMAS = ("\u09cd", "\u094d")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+SLIP_LABELS = ["Application No", "Applicant Name", "Mobile", "Date of Birth",
+               "Village", "Block", "Bank Account", "IFSC", "Submitted At", "Status"]
 
 
 def _font_for(ch, previous):
@@ -475,7 +608,7 @@ def _font_for(ch, previous):
         return DEVANAGARI_FONT
     if ch in _JOINERS:
         return previous
-    return LATIN_FONT
+    return CORE_FONT if cp < 256 else LATIN_FONT
 
 
 def _script_runs(text):
@@ -483,7 +616,7 @@ def _script_runs(text):
     choice is used instead of fpdf2 fallback fonts, which misrender when
     combined with text shaping."""
     runs = []
-    font = LATIN_FONT
+    font = CORE_FONT
     for ch in text:
         font = _font_for(ch, font)
         if runs and runs[-1][0] == font:
@@ -493,85 +626,128 @@ def _script_runs(text):
     return [(f, t) for f, t in runs]
 
 
-def _text_width(pdf, text, size):
-    total = 0
-    for font, run in _script_runs(text):
-        pdf.set_font(font, "", size)
-        total += pdf.get_string_width(run)
-    return total
+class _Slip(object):
+    """One acknowledgment PDF; fonts are registered the first time they are used."""
 
+    def __init__(self, shaping):
+        self.pdf = FPDF()
+        if shaping:
+            self.pdf.set_text_shaping(True)   # Bengali/Devanagari conjuncts, vowel signs
+        self.pdf.set_margins(15, 15, 15)
+        self.loaded = set()
 
-def _wrap(pdf, text, size, max_width):
-    """Greedy line wrap that prefers spaces and never splits a letter cluster."""
-    lines, current = [], ""
-    for ch in text:
-        if (current and _text_width(pdf, current + ch, size) > max_width
-                and not unicodedata.category(ch).startswith("M")
-                and ch not in _JOINERS and current[-1] not in _VIRAMAS):
-            space = current.rfind(" ")
-            if ch != " " and space > 0:
-                lines.append(current[:space])
-                current = current[space + 1:] + ch
+    def font(self, family, style="", size=10):
+        if family in _FONT_FILES and family not in self.loaded:
+            self.pdf.add_font(family, "", os.path.join(FONT_DIR, _FONT_FILES[family]))
+            self.loaded.add(family)
+        self.pdf.set_font(family, "" if family in _FONT_FILES else style, size)
+
+    def width(self, text, size):
+        total = 0
+        for family, run in _script_runs(text):
+            self.font(family, "", size)
+            total += self.pdf.get_string_width(run)
+        return total
+
+    def wrap(self, text, size, max_width):
+        """Greedy line wrap that prefers spaces and never splits a letter cluster."""
+        lines, current = [], ""
+        for ch in text:
+            if (current and self.width(current + ch, size) > max_width
+                    and not unicodedata.category(ch).startswith("M")
+                    and ch not in _JOINERS and current[-1] not in _VIRAMAS):
+                space = current.rfind(" ")
+                if ch != " " and space > 0:
+                    lines.append(current[:space])
+                    current = current[space + 1:] + ch
+                else:
+                    lines.append(current)
+                    current = ch.lstrip(" ")
             else:
-                lines.append(current)
-                current = ch.lstrip(" ")
-        else:
-            current += ch
-    lines.append(current)
-    return lines
+                current += ch
+        lines.append(current)
+        return lines
+
+    def row(self, label, value, size=10, line_h=8, label_w=60):
+        pdf = self.pdf
+        x0, y0 = pdf.l_margin, pdf.get_y()
+        value_w = pdf.w - pdf.r_margin - pdf.l_margin - label_w
+        lines = self.wrap(value, size, value_w - 2)
+        height = line_h * len(lines)
+        pdf.rect(x0, y0, label_w, height)
+        pdf.rect(x0 + label_w, y0, value_w, height)
+        self.font(CORE_FONT, "", size)
+        pdf.set_xy(x0 + 1, y0)
+        pdf.cell(label_w - 2, line_h, label)
+        for n, line in enumerate(lines):
+            pdf.set_xy(x0 + label_w + 1, y0 + n * line_h)
+            for family, run in _script_runs(line):
+                self.font(family, "", size)
+                pdf.cell(pdf.get_string_width(run), line_h, run)
+        pdf.set_xy(x0, y0 + height)
 
 
-def _draw_row(pdf, label, value, size=10, line_h=8, label_w=60):
-    x0, y0 = pdf.l_margin, pdf.get_y()
-    value_w = pdf.w - pdf.r_margin - pdf.l_margin - label_w
-    lines = _wrap(pdf, value, size, value_w - 2)
-    height = line_h * len(lines)
-    pdf.rect(x0, y0, label_w, height)
-    pdf.rect(x0 + label_w, y0, value_w, height)
-    pdf.set_font(LATIN_FONT, "", size)
-    pdf.set_xy(x0 + 1, y0)
-    pdf.cell(label_w - 2, line_h, label)
-    for n, line in enumerate(lines):
-        pdf.set_xy(x0 + label_w + 1, y0 + n * line_h)
-        for font, run in _script_runs(line):
-            pdf.set_font(font, "", size)
-            pdf.cell(pdf.get_string_width(run), line_h, run)
-    pdf.set_xy(x0, y0 + height)
-
-
-def generate_acknowledgment(cur, app_id):
+def fetch_acknowledgment_row(cur, app_id):
+    """Everything the slip prints, as display strings. Do this inside the database
+    connection; draw afterwards (render_acknowledgment) once it is released."""
     cur.execute("SELECT application_no, applicant_name, mobile, dob, village, block, "
                 "bank_account, ifsc, submitted_at, status FROM applications WHERE id = %s",
                 (app_id,))
     row = list(cur.fetchone())
     row[9] = display_status(row[9])
-    pdf = FPDF()
-    for family, style, filename in _FONT_FILES:
-        pdf.add_font(family, style, os.path.join(FONT_DIR, filename))
-    pdf.set_text_shaping(True)     # correct Bengali/Devanagari conjuncts and vowel signs
-    pdf.set_margins(15, 15, 15)
+    return [_CONTROL.sub(" ", "" if v is None else str(v)) for v in row]
+
+
+def render_acknowledgment(row):
+    """Draw the slip. Pure CPU, no database access."""
+    needs_shaping = any(0x0900 <= ord(ch) <= 0x09FF for value in row for ch in value)
+    slip = _Slip(needs_shaping)
+    pdf = slip.pdf
     pdf.add_page()
-    pdf.set_font(LATIN_FONT, "B", 14)
+    slip.font(CORE_FONT, "B", 14)
     pdf.cell(0, 10, "GOVERNMENT OF PURVANCHAL", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.set_font(LATIN_FONT, "", 11)
+    slip.font(CORE_FONT, "", 11)
     pdf.cell(0, 8, "Department of Social Welfare", new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.cell(0, 8, "Old Age Pension Scheme - Acknowledgment", new_x="LMARGIN", new_y="NEXT",
              align="C")
     pdf.ln(4)
-    # decorative border, as per approved letterhead design
-    for i in range(0, 2000):
-        x = 10 + (i % 190)
-        pdf.line(x, 282, x + 0.5, 282)
-        pdf.line(x, 12, x + 0.5, 12)
-    labels = ["Application No", "Applicant Name", "Mobile", "Date of Birth",
-              "Village", "Block", "Bank Account", "IFSC", "Submitted At", "Status"]
-    for label, val in zip(labels, row):
-        _draw_row(pdf, label, str(val))
+    # decorative border, as per approved letterhead design: two lines (it used to
+    # be 4,000 overlapping 0.5 mm segments that looked the same)
+    pdf.line(10, 282, 200, 282)
+    pdf.line(10, 12, 200, 12)
+    for label, value in zip(SLIP_LABELS, row):
+        slip.row(label, value)
     pdf.ln(6)
-    pdf.set_font(LATIN_FONT, "", 9)
+    slip.font(CORE_FONT, "", 9)
     pdf.multi_cell(0, 5, "This is a computer generated acknowledgment. Processing SLA "
                          "as per the Purvanchal Right to Public Services Act applies.")
     return bytes(pdf.output())
+
+
+def generate_acknowledgment(cur, app_id):
+    return render_acknowledgment(fetch_acknowledgment_row(cur, app_id))
+
+
+# Slips are cached on disk (UPLOAD_DIR/ack/<id>.pdf) so a download after the first
+# does no work; the cache entry is dropped whenever the application changes.
+def acknowledgment_path(app_id):
+    return os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
+
+
+def save_acknowledgment(app_id, data):
+    path = acknowledgment_path(app_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.%s.tmp" % (path, uuid.uuid4().hex)     # write then rename: never half a file
+    with open(tmp, "wb") as out:
+        out.write(data)
+    os.replace(tmp, path)
+
+
+def invalidate_acknowledgment(app_id):
+    try:
+        os.remove(acknowledgment_path(app_id))
+    except FileNotFoundError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -583,21 +759,18 @@ def status_login():
     if request.method == "POST":
         mobile = request.form.get("mobile", "").strip()
         password = request.form.get("password", "")
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT password_hash FROM portal_users WHERE mobile = %s", (mobile,))
-        row = cur.fetchone()
-        cur.close(); conn.close()
+        with db_cursor() as cur:
+            cur.execute("SELECT password_hash FROM portal_users WHERE mobile = %s", (mobile,))
+            row = cur.fetchone()
+            r = None
+            if row and safe_equals(row[0], hash_password(password)):
+                cur.execute("SELECT id FROM applications WHERE mobile = %s "
+                            "ORDER BY submitted_at DESC LIMIT 1", (mobile,))
+                r = cur.fetchone()
         if row and safe_equals(row[0], hash_password(password)):
             session.clear()
             session["logged_in"] = True
             session["portal_mobile"] = mobile
-            conn = get_db()
-            cur = conn.cursor()
-            cur.execute("SELECT id FROM applications WHERE mobile = %s "
-                        "ORDER BY submitted_at DESC LIMIT 1", (mobile,))
-            r = cur.fetchone()
-            cur.close(); conn.close()
             if r:
                 return redirect(url_for("view_application", app_id=r[0]))
             flash("No application found for this mobile number.")
@@ -611,20 +784,14 @@ def view_application(app_id):
     if not session.get("logged_in"):
         flash("Please login to view application status.")
         return redirect(url_for("status_login"))
-    conn = get_db()
-    cur = conn.cursor()
-    try:
+    with db_cursor() as cur:
         require_application_access(cur, app_id)
-    except Exception:
-        cur.close(); conn.close()
-        raise
-    if deem_if_overdue(cur, app_id):
-        conn.commit()
-    cur.execute("SELECT application_no, applicant_name, mobile, dob, village, block, "
-                "bank_account, ifsc, status, submitted_at, decided_at "
-                "FROM applications WHERE id = %s", (app_id,))
-    row = cur.fetchone()
-    cur.close(); conn.close()
+        if deem_if_overdue(cur, app_id):
+            cur.connection.commit()
+        cur.execute("SELECT application_no, applicant_name, mobile, dob, village, block, "
+                    "bank_account, ifsc, status, submitted_at, decided_at "
+                    "FROM applications WHERE id = %s", (app_id,))
+        row = cur.fetchone()
     if not row:
         abort(404)
     return render_template("application.html", a=row, app_id=app_id,
@@ -634,54 +801,58 @@ def view_application(app_id):
 
 @app.route("/ack/<int:app_id>.pdf")
 def ack_pdf(app_id):
-    conn = get_db()
-    cur = conn.cursor()
-    try:
+    path = acknowledgment_path(app_id)
+    with db_cursor() as cur:
         require_application_access(cur, app_id, allow_just_submitted=True)
-    except Exception:
-        cur.close(); conn.close()
-        raise
-    if deem_if_overdue(cur, app_id):
-        conn.commit()
-    cur.execute("SELECT decided_at FROM applications WHERE id = %s", (app_id,))
-    found = cur.fetchone()
-    if not found:
-        cur.close(); conn.close()
-        abort(404)
-    path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
-    decided_at = found[0]
-    if (os.path.exists(path) and decided_at is not None and
-            os.path.getmtime(path) < decided_at.replace(tzinfo=IST).timestamp()):
-        # slip written at submission predates the decision (e.g. says PENDING)
-        os.remove(path)
-    if not os.path.exists(path):
-        data = generate_acknowledgment(cur, app_id)
-        cur.close(); conn.close()
-        return send_file(io.BytesIO(data), mimetype="application/pdf")
-    cur.close(); conn.close()
-    return send_file(path, mimetype="application/pdf")
+        if deem_if_overdue(cur, app_id):
+            cur.connection.commit()
+        cur.execute("SELECT decided_at FROM applications WHERE id = %s", (app_id,))
+        found = cur.fetchone()
+        if not found:
+            abort(404)
+        decided_at = found[0]
+        if (os.path.exists(path) and decided_at is not None and
+                os.path.getmtime(path) < decided_at.replace(tzinfo=IST).timestamp()):
+            invalidate_acknowledgment(app_id)    # slip predates the decision
+        slip_row = None if os.path.exists(path) else fetch_acknowledgment_row(cur, app_id)
+
+    # Nothing below needs the database, so the connection is already back in the pool.
+    if slip_row is None:
+        try:
+            return send_file(path, mimetype="application/pdf")
+        except FileNotFoundError:                 # removed between the check and now
+            with db_cursor() as cur:
+                slip_row = fetch_acknowledgment_row(cur, app_id)
+    data = render_acknowledgment(slip_row)
+    try:
+        save_acknowledgment(app_id, data)
+    except OSError as e:
+        app.logger.error("could not cache acknowledgment pdf application=%d: %s" % (app_id, e))
+    return send_file(io.BytesIO(data), mimetype="application/pdf")
 
 
 @app.route("/status/reset", methods=["GET", "POST"])
 def reset_password():
     if request.method == "POST":
         mobile = request.form.get("mobile", "")
-        conn = get_db()
-        cur = conn.cursor()
-        # fetch account for reset
-        cur.execute("SELECT mobile FROM portal_users WHERE mobile = %s", (mobile,))
-        row = cur.fetchone()
-        if row:
-            cur.execute("SELECT dob FROM applications WHERE mobile = %s LIMIT 1", (mobile,))
-            r2 = cur.fetchone()
-            if r2:
-                newpass = r2[0].strftime("%d%m%Y")
-                cur.execute("UPDATE portal_users SET password_hash = %s WHERE mobile = %s",
-                            (hash_password(newpass), row[0]))
-                conn.commit()
-                send_sms(row[0], "Sewa Setu: your password has been reset to your "
-                                 "date of birth (DDMMYYYY).")
-        cur.close(); conn.close()
+        reset_mobile = None
+        with db_cursor() as cur:
+            # fetch account for reset
+            cur.execute("SELECT mobile FROM portal_users WHERE mobile = %s", (mobile,))
+            row = cur.fetchone()
+            if row:
+                cur.execute("SELECT dob FROM applications WHERE mobile = %s LIMIT 1", (mobile,))
+                r2 = cur.fetchone()
+                if r2:
+                    newpass = r2[0].strftime("%d%m%Y")
+                    cur.execute("UPDATE portal_users SET password_hash = %s WHERE mobile = %s",
+                                (hash_password(newpass), row[0]))
+                    cur.connection.commit()
+                    reset_mobile = row[0]
+        if reset_mobile:
+            # outside the pooled connection: the gateway call can take seconds
+            send_sms(reset_mobile, "Sewa Setu: your password has been reset to your "
+                                   "date of birth (DDMMYYYY).")
         flash("If the mobile number exists, the password has been reset and sent by SMS.")
     return render_template("reset.html")
 
@@ -708,17 +879,15 @@ def admin_login():
 def admin_dashboard():
     if not session.get("admin"):
         return redirect(url_for("admin_login"))
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT status, count(*) FROM applications GROUP BY status")
-    by_status = cur.fetchall()
-    cur.execute("SELECT count(*) FROM applications WHERE status = 'PENDING' "
-                "AND submitted_at < %s", (datetime.now() - timedelta(days=SLA_DAYS),))
-    overdue = cur.fetchone()[0]
-    cur.execute("SELECT block, count(*) FROM applications WHERE status = 'PENDING' "
-                "GROUP BY block ORDER BY count(*) DESC")
-    by_block = cur.fetchall()
-    cur.close(); conn.close()
+    with db_cursor() as cur:
+        cur.execute("SELECT status, count(*) FROM applications GROUP BY status")
+        by_status = cur.fetchall()
+        cur.execute("SELECT count(*) FROM applications WHERE status = 'PENDING' "
+                    "AND submitted_at < %s", (datetime.now() - timedelta(days=SLA_DAYS),))
+        overdue = cur.fetchone()[0]
+        cur.execute("SELECT block, count(*) FROM applications WHERE status = 'PENDING' "
+                    "GROUP BY block ORDER BY count(*) DESC")
+        by_block = cur.fetchall()
     return render_template("admin_dashboard.html", by_status=by_status,
                            overdue=overdue, by_block=by_block, sla=SLA_DAYS)
 
@@ -729,14 +898,12 @@ def admin_list():
         return redirect(url_for("admin_login"))
     status = request.args.get("status", "PENDING")
     page = min(max(request.args.get("page", 1, type=int), 1), 1000000)
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id, application_no, applicant_name, mobile, block, status, "
-                "submitted_at FROM applications WHERE status = %s "
-                "ORDER BY submitted_at ASC LIMIT 50 OFFSET %s",
-                (status, (page - 1) * 50))
-    rows = cur.fetchall()
-    cur.close(); conn.close()
+    with db_cursor() as cur:
+        cur.execute("SELECT id, application_no, applicant_name, mobile, block, status, "
+                    "submitted_at FROM applications WHERE status = %s "
+                    "ORDER BY submitted_at ASC LIMIT 50 OFFSET %s",
+                    (status, (page - 1) * 50))
+        rows = cur.fetchall()
     return render_template("admin_list.html", rows=rows, status=status, page=page)
 
 
@@ -744,14 +911,12 @@ def admin_list():
 def admin_view(app_id):
     if not session.get("admin"):
         return redirect(url_for("admin_login"))
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT application_no, applicant_name, mobile, dob, gender, "
-                "marital_status, village, block, bank_account, ifsc, doc_path, "
-                "status, submitted_at, decided_at, decided_by "
-                "FROM applications WHERE id = %s", (app_id,))
-    row = cur.fetchone()
-    cur.close(); conn.close()
+    with db_cursor() as cur:
+        cur.execute("SELECT application_no, applicant_name, mobile, dob, gender, "
+                    "marital_status, village, block, bank_account, ifsc, doc_path, "
+                    "status, submitted_at, decided_at, decided_by "
+                    "FROM applications WHERE id = %s", (app_id,))
+        row = cur.fetchone()
     if not row:
         abort(404)
     return render_template("admin_view.html", a=row, app_id=app_id)
@@ -761,13 +926,12 @@ def admin_view(app_id):
 def admin_approve(app_id):
     if not session.get("admin"):
         abort(403)
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE applications SET status = 'APPROVED', decided_at = %s, "
-                "decided_by = %s WHERE id = %s",
-                (now_ist(), session.get("admin_user", "admin"), app_id))
-    conn.commit()
-    cur.close(); conn.close()
+    with db_cursor() as cur:
+        cur.execute("UPDATE applications SET status = 'APPROVED', decided_at = %s, "
+                    "decided_by = %s WHERE id = %s",
+                    (now_ist(), session.get("admin_user", "admin"), app_id))
+        cur.connection.commit()
+    invalidate_acknowledgment(app_id)      # the cached slip shows the old status
     flash("Application approved.")
     return redirect(url_for("admin_list"))
 
@@ -776,13 +940,12 @@ def admin_approve(app_id):
 def admin_reject(app_id):
     if not session.get("admin"):
         abort(403)
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE applications SET status = 'REJECTED', decided_at = %s, "
-                "decided_by = %s WHERE id = %s",
-                (now_ist(), session.get("admin_user", "admin"), app_id))
-    conn.commit()
-    cur.close(); conn.close()
+    with db_cursor() as cur:
+        cur.execute("UPDATE applications SET status = 'REJECTED', decided_at = %s, "
+                    "decided_by = %s WHERE id = %s",
+                    (now_ist(), session.get("admin_user", "admin"), app_id))
+        cur.connection.commit()
+    invalidate_acknowledgment(app_id)      # the cached slip shows the old status
     flash("Application rejected.")
     return redirect(url_for("admin_list"))
 
@@ -815,6 +978,7 @@ def run_startup_migrations():
     # depends_on does not wait for Postgres to accept connections, so retry.
     for attempt in range(5):
         try:
+            ensure_indexes()
             healed = heal_overdue_applications()
             if healed:
                 app.logger.info("startup: deemed approved %d overdue applications "

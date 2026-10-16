@@ -19,4 +19,6 @@ RUN mkdir -p /var/sewasetu/uploads /var/log/sewasetu \
     && crontab /app/deploy/crontab
 
 EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "30", "app:app"]
+# 4 processes x 4 threads. Each process holds a pool of at most 20 database
+# connections (see app.py), so the web tier stays well under Postgres's limit.
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "4", "--timeout", "30", "--worker-tmp-dir", "/dev/shm", "app:app"]

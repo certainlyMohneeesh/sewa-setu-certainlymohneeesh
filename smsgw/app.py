@@ -5,12 +5,14 @@ web console at / once "delivered", after a short carrier latency.
 """
 
 import random
+import threading
 import time
 from flask import Flask, request, jsonify, render_template_string
 
 app = Flask(__name__)
 
 MESSAGES = []  # {id, to, text, sent_at, delivery_at}
+_lock = threading.Lock()  # sends arrive on many threads; ids must stay unique
 
 # Carrier queue latency, seconds.
 DELAY_MIN = 1
@@ -47,14 +49,15 @@ def send():
     if not to or not text:
         return jsonify({"status": "error", "reason": "to and text required"}), 400
     now = time.time()
-    msg = {
-        "id": len(MESSAGES) + 1,
-        "to": to,
-        "text": text,
-        "sent_at": now,
-        "delivery_at": now + random.randint(DELAY_MIN, DELAY_MAX),
-    }
-    MESSAGES.append(msg)
+    with _lock:
+        msg = {
+            "id": len(MESSAGES) + 1,
+            "to": to,
+            "text": text,
+            "sent_at": now,
+            "delivery_at": now + random.randint(DELAY_MIN, DELAY_MAX),
+        }
+        MESSAGES.append(msg)
     return jsonify({"status": "queued", "id": msg["id"]})
 
 
@@ -64,7 +67,7 @@ def messages():
     to = request.args.get("to", "")
     now = time.time()
     out = []
-    for m in MESSAGES:
+    for m in list(MESSAGES):
         if to and m["to"] != to:
             continue
         out.append({
@@ -80,7 +83,7 @@ def messages():
 def console():
     now = time.time()
     view = []
-    for m in reversed(MESSAGES[-100:]):
+    for m in reversed(list(MESSAGES)[-100:]):
         view.append({
             "id": m["id"], "to": m["to"], "text": m["text"],
             "sent_hhmm": time.strftime("%H:%M:%S", time.localtime(m["sent_at"])),
@@ -91,4 +94,4 @@ def console():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8025)
+    app.run(host="0.0.0.0", port=8025, threaded=True)

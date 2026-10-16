@@ -1,4 +1,4 @@
-Noto Sans (Regular, Bold), Noto Sans Bengali (Regular), Noto Sans Devanagari (Regular).
+Noto Sans, Noto Sans Bengali and Noto Sans Devanagari (Regular).
 
 Used to print citizens' names on the acknowledgment slip. Bengali script covers
 Assamese; Devanagari covers Hindi, Marathi, Nepali. The core PDF fonts
