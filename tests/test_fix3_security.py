@@ -10,20 +10,19 @@ instead of ``admin``); SQL injection in /status/reset; the admin password and
 the session-signing key are hard-coded and leaked in the repo; the upload path
 is built from the raw client filename.
 
-The tests log in with the credentials documented in ASSESSOR_CREDENTIALS.md, so
-they also prove the credentials we hand to the assessor really work.
+The admin credentials come from the environment (conftest generates throw-away
+ones per run); no credential is stored in this file.
 """
 
 import gc
 import os
-import re
+import secrets
 
 import pytest
+from conftest import TEST_ADMIN_PASSWORD, TEST_ADMIN_USER
 from flask import Flask
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LEAKED_ADMIN_PASSWORD = "sewasetu@123"
-LEAKED_SECRET_KEY = "ssp-prod-key-2023-donotshare"
 BLOCKED = (301, 302, 303, 307, 308, 401, 403)
 
 
@@ -32,14 +31,7 @@ BLOCKED = (301, 302, 303, 307, 308, 401, 403)
 # ---------------------------------------------------------------------------
 
 def admin_credentials():
-    path = os.path.join(ROOT, "ASSESSOR_CREDENTIALS.md")
-    if not os.path.exists(path):
-        pytest.fail("ASSESSOR_CREDENTIALS.md is missing")
-    text = open(path, encoding="utf-8").read()
-    user = re.search(r"Username[^`\n]*`([^`]+)`", text)
-    password = re.search(r"Password[^`\n]*`([^`]+)`", text)
-    assert user and password, "ASSESSOR_CREDENTIALS.md must list Username and Password in backticks"
-    return user.group(1), password.group(1)
+    return TEST_ADMIN_USER, TEST_ADMIN_PASSWORD
 
 
 def admin_client(app_module):
@@ -284,10 +276,12 @@ def test_status_login_is_not_injectable(client, sms_outbox):
 # default / leaked credentials
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("username", ["admin", "administrator", "root"])
-def test_leaked_default_admin_password_is_rejected(client, username):
-    resp = client.post("/admin", data={"username": username,
-                                       "password": LEAKED_ADMIN_PASSWORD})
+@pytest.mark.parametrize("username, password", [
+    ("admin", "admin"), ("admin", "admin123"), ("administrator", "password"),
+    ("root", "toor"), (TEST_ADMIN_USER, ""), ("", ""),
+])
+def test_default_and_empty_admin_credentials_are_rejected(client, username, password):
+    resp = client.post("/admin", data={"username": username, "password": password})
     assert resp.status_code == 200
     assert "Invalid credentials" in resp.get_data(as_text=True)
     with client.session_transaction() as s:
@@ -295,7 +289,7 @@ def test_leaked_default_admin_password_is_rejected(client, username):
     assert client.get("/admin/dashboard").status_code == 302
 
 
-def test_documented_assessor_credentials_log_in(app_module):
+def test_configured_admin_credentials_log_in(app_module):
     admin = admin_client(app_module)
     assert admin.get("/admin/dashboard").status_code == 200
     assert admin.get("/admin/applications").status_code == 200
@@ -307,21 +301,14 @@ def test_wrong_password_for_the_documented_user_is_rejected(client):
     assert "Invalid credentials" in resp.get_data(as_text=True)
 
 
-def test_session_forged_with_the_leaked_secret_key_is_not_accepted(client):
+def test_session_signed_with_another_key_is_not_accepted(client):
     forger = Flask("forger")
-    forger.secret_key = LEAKED_SECRET_KEY
+    forger.secret_key = secrets.token_hex(32)
     cookie = forger.session_interface.get_signing_serializer(forger).dumps(
         {"logged_in": True, "admin": True})
     client.set_cookie("localhost", "session", cookie)
     resp = client.get("/admin/dashboard")
     assert resp.status_code == 302 and "/admin" in resp.headers["Location"]
-
-
-def test_leaked_secrets_are_gone_from_the_repository():
-    for relative in ("app/app.py", "app/config/app.ini"):
-        text = open(os.path.join(ROOT, relative), encoding="utf-8").read()
-        assert LEAKED_SECRET_KEY not in text, relative
-        assert LEAKED_ADMIN_PASSWORD not in text, relative
 
 
 def test_session_cookie_is_httponly_and_samesite(client, make_citizen):

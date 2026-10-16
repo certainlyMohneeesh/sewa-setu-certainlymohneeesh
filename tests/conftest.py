@@ -8,7 +8,7 @@ docker-compose, or any local Postgres restored from the same files).
 Point the tests at the database with environment variables; anything unset falls
 back to ``app/config/app.ini`` (host ``db``):
 
-    SEWASETU_DB_HOST=127.0.0.1 SEWASETU_DB_PORT=5432 pytest
+    SEWASETU_DB_HOST=127.0.0.1 SEWASETU_DB_PORT=5432 SEWASETU_DB_PASSWORD=... pytest
 
 Safety rules for tests:
 * Seeded citizens are never modified. Tests create their own citizens with
@@ -21,6 +21,7 @@ Safety rules for tests:
 import io
 import os
 import random
+import secrets
 import sys
 from datetime import datetime, timedelta
 
@@ -33,6 +34,17 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 TEST_MOBILE_PREFIX = "5"
+
+# Credentials the app reads from the environment. The suite generates throw-away
+# values per run, so no real secret is ever needed (or written) in the repository.
+# The database password is the one thing the developer supplies:
+#   SEWASETU_DB_HOST=127.0.0.1 SEWASETU_DB_PASSWORD=... pytest
+TEST_ADMIN_USER = "test-admin"
+TEST_ADMIN_PASSWORD = secrets.token_urlsafe(18)
+os.environ["SECRET_KEY"] = secrets.token_hex(32)
+os.environ["ADMIN_USERNAME"] = TEST_ADMIN_USER
+os.environ["ADMIN_PASSWORD"] = TEST_ADMIN_PASSWORD
+os.environ.pop("ADMIN_PASSWORD_HASH", None)
 
 # app.py heals overdue applications when imported; keep tests from rewriting the
 # seeded database as a side effect (tests exercise the function explicitly).

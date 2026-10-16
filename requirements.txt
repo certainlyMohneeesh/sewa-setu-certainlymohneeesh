@@ -7,6 +7,7 @@
 
 pytest==8.3.3
 pypdf==6.20.1   # read text back out of acknowledgment PDFs
+PyYAML==6.0.3   # tests parse docker-compose.yml
 
 # Flask 2.2.5 only declares Werkzeug>=2.2.2; Werkzeug 3.x removes
 # `werkzeug.__version__`, which breaks Flask 2.2.5's test client.
