@@ -2,8 +2,8 @@
 {% block content %}
 <h2>Reset Password</h2>
 <form method="post">
-  <label>Registered Mobile Number</label>
-  <input type="text" name="mobile">
+  <label for="mobile">Registered Mobile Number</label>
+  <input type="text" id="mobile" name="mobile" maxlength="10" inputmode="numeric">
   <p><button class="btn" type="submit">Reset Password</button></p>
 </form>
 {% endblock %}

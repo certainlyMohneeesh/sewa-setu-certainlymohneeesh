@@ -2,10 +2,15 @@
 {% block content %}
 <h2>Application Status Portal</h2>
 <form method="post">
-  <label>Mobile Number</label>
-  <input type="text" name="mobile" maxlength="10">
-  <label>Password</label>
-  <input type="password" name="password">
+  <label for="mobile">Mobile Number</label>
+  <input type="text" id="mobile" name="mobile" maxlength="10" inputmode="numeric"
+         autocomplete="username" aria-describedby="mobile-hint">
+  <p class="hint" id="mobile-hint">The 10 digit number you applied with.</p>
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" autocomplete="current-password"
+         aria-describedby="password-help">
+  <p class="hint" id="password-help">Your password is your date of birth as DDMMYYYY,
+  for example 05101960 for 5 October 1960.</p>
   <p><button class="btn" type="submit">Login</button></p>
 </form>
 <p class="note"><a href="/status/reset">Forgot password?</a></p>

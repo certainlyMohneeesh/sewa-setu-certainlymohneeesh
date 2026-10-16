@@ -26,7 +26,7 @@ apply again.</p>
 <p><a class="btn" href="/application/{{ app_id }}/edit">Edit Application</a></p>
 <form method="post" action="/application/{{ app_id }}/cancel"
       onsubmit="return confirm('Withdraw this application? You can apply again afterwards.');">
-  <button class="btn" type="submit" style="background:#a33">Cancel / Withdraw Application</button>
+  <button class="btn danger" type="submit">Cancel / Withdraw Application</button>
 </form>
 {% endif %}
 {% endblock %}

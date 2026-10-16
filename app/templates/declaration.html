@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% from "_progress.html" import progress %}
 {% block content %}
-<div class="steps"><b>Step 6 of 6:</b> Declaration</div>
+{{ progress(6) }}
 <h2>Declaration</h2>
 <p>I hereby declare that the information furnished above is true to the best of my
 knowledge and belief. I understand that furnishing false information is punishable
@@ -25,7 +26,7 @@ under applicable law and will result in cancellation of pension.</p>
       <td><a href="/upload">Edit</a></td></tr>
 </table>
 <form method="post">
-  <p><input type="checkbox" required> I agree to the above declaration.</p>
+  <p><label style="font-weight:normal"><input type="checkbox" required> I agree to the above declaration.</label></p>
   <p><button class="btn" type="submit">Submit Application</button></p>
 </form>
 {% endblock %}

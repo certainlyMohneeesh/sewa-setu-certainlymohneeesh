@@ -1,0 +1,43 @@
+/* Sewa Setu portal: large, high-contrast, keyboard-friendly. */
+*{box-sizing:border-box}
+html{font-size:18px}
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f0f2f5;color:#111;line-height:1.5}
+.skip{position:absolute;left:-999px;top:0;background:#000;color:#fff;padding:10px 16px;z-index:10}
+.skip:focus{left:8px;top:8px}
+.header{background:#0b3d6e;color:#fff;padding:16px 28px}
+.header h1{margin:0;font-size:1.4rem}
+.header .sub{font-size:.85rem;color:#e3eefb}
+.band{background:#f7931e;height:6px}
+.container{max-width:860px;margin:24px auto;background:#fff;padding:28px;
+border:1px solid #c5cad1;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h2{color:#0b3d6e;margin-top:0}
+a{color:#0b3d6e}
+:focus-visible{outline:3px solid #f7931e;outline-offset:2px}
+.btn{display:inline-block;background:#0b3d6e;color:#fff;border:2px solid #0b3d6e;padding:12px 24px;
+font-size:1rem;cursor:pointer;text-decoration:none;border-radius:4px}
+.btn:hover{background:#0d4a85}
+.btn.secondary{background:#fff;color:#0b3d6e}
+.btn.danger{background:#a11;border-color:#a11}
+label{display:block;margin:16px 0 4px;font-weight:bold}
+input[type=text],input[type=password],input[type=file],select{width:100%;max-width:460px;padding:10px;
+border:2px solid #667;font-size:1rem;border-radius:4px;background:#fff}
+input[aria-invalid=true]{border-color:#b00020}
+.hint{font-size:.85rem;color:#333;margin:4px 0 0;min-height:1.2em}
+.hint.bad{color:#b00020;font-weight:bold}
+.hint.good{color:#176b2c}
+.flash{background:#fdecea;border:2px solid #b00020;color:#7a0016;padding:12px 16px;margin:14px 0;
+font-weight:bold;border-radius:4px}
+.note{font-size:.9rem;color:#333}
+.footer{max-width:860px;margin:10px auto 40px;font-size:.8rem;color:#444;text-align:center;padding:0 12px}
+.footer a{margin:0 8px}
+table.tbl{border-collapse:collapse;width:100%}
+table.tbl td,table.tbl th{border:1px solid #99a;padding:8px 10px;font-size:.9rem;text-align:left}
+table.tbl th{background:#eef2f7}
+ol.progress{list-style:none;display:flex;gap:6px;padding:0;margin:0 0 22px;flex-wrap:wrap}
+ol.progress li{flex:1 1 90px;padding:6px 8px;font-size:.75rem;text-align:center;background:#e4e7ec;
+color:#333;border-bottom:5px solid #b8bec8}
+ol.progress li.done{border-bottom-color:#176b2c;color:#176b2c}
+ol.progress li.current{background:#0b3d6e;color:#fff;border-bottom-color:#f7931e;font-weight:bold}
+.steps-label{font-size:.85rem;color:#333;margin-bottom:6px}
+.hidden{display:none}
+@media (max-width:640px){html{font-size:17px}.container{margin:0;padding:16px;border:none}}

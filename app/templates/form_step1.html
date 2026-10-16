@@ -1,30 +1,40 @@
 {% extends "base.html" %}
+{% from "_progress.html" import progress %}
 {% block content %}
-<div class="steps"><b>Step 2 of 6:</b> Personal Details</div>
+{{ progress(2) }}
 <h2>Personal Details</h2>
 <form method="post">
-  <label>Full Name of Applicant (as per age proof document)</label>
-  <input type="text" name="applicant_name" value="{{ data.get('applicant_name','') }}">
-  <label>Date of Birth (DD/MM/YYYY)</label>
-  <input type="text" name="dob" placeholder="DD/MM/YYYY" value="{{ data.get('dob','') }}">
-  <label>Gender</label>
-  <select name="gender">
+  <label for="applicant_name">Full Name of Applicant (as per age proof document)</label>
+  <input type="text" id="applicant_name" name="applicant_name" maxlength="100"
+         autocomplete="name" value="{{ data.get('applicant_name','') }}">
+  <label for="dob">Date of Birth (DD/MM/YYYY)</label>
+  <input type="text" id="dob" name="dob" placeholder="DD/MM/YYYY" inputmode="numeric"
+         autocomplete="bday" aria-describedby="dob-hint" value="{{ data.get('dob','') }}">
+  <p class="hint" id="dob-hint">Day / Month / Year, for example 05/10/1960.</p>
+  <label for="gender">Gender</label>
+  <select id="gender" name="gender">
     <option value="">--Select--</option>
     <option {% if data.get('gender')=='Male' %}selected{% endif %}>Male</option>
     <option {% if data.get('gender')=='Female' %}selected{% endif %}>Female</option>
     <option {% if data.get('gender')=='Other' %}selected{% endif %}>Other</option>
   </select>
-  <label>Marital Status</label>
-  <select name="marital_status">
+  <label for="marital_status">Marital Status</label>
+  <select id="marital_status" name="marital_status">
     <option value="">--Select--</option>
     <option {% if data.get('marital_status')=='Married' %}selected{% endif %}>Married</option>
     <option {% if data.get('marital_status')=='Unmarried' %}selected{% endif %}>Unmarried</option>
     <option {% if data.get('marital_status')=='Widowed' %}selected{% endif %}>Widowed</option>
   </select>
-  <label>Husband's Name / Late Spouse's Name (optional)</label>
-  <input type="text" name="husband_name" value="{{ data.get('husband_name','') }}">
-  <label>Husband's Current Employer (optional, leave blank if widowed or not applicable)</label>
-  <input type="text" name="husband_employer" value="{{ data.get('husband_employer','') }}">
+  <div id="husband-name-row">
+    <label for="husband_name">Husband's Name / Late Spouse's Name (Optional)</label>
+    <input type="text" id="husband_name" name="husband_name" maxlength="100"
+           value="{{ data.get('husband_name','') }}">
+  </div>
+  <div id="husband-employer-row">
+    <label for="husband_employer">Husband's Current Employer (Optional)</label>
+    <input type="text" id="husband_employer" name="husband_employer" maxlength="100"
+           value="{{ data.get('husband_employer','') }}">
+  </div>
   <p class="note">Name, date of birth, gender and marital status are required. The
   husband's details are optional.</p>
   <p><button class="btn" type="submit">Save &amp; Continue</button></p>

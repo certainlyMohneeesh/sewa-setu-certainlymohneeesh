@@ -1,11 +1,14 @@
 {% extends "base.html" %}
+{% from "_progress.html" import progress %}
 {% block content %}
-<div class="steps"><b>Step 1 of 6:</b> Mobile Verification</div>
+{{ progress(1) }}
 <h2>Enter OTP</h2>
-<p class="note">An OTP has been sent to {{ mobile }}.</p>
+<p class="note">An OTP has been sent to {{ mobile }}. It may take a few seconds to arrive.
+If it does not, <a href="/apply">request a new OTP</a>.</p>
 <form method="post">
-  <label>OTP</label>
-  <input type="text" name="otp" maxlength="6" style="max-width:160px">
+  <label for="otp">OTP (6 digits)</label>
+  <input type="text" id="otp" name="otp" maxlength="6" inputmode="numeric"
+         autocomplete="one-time-code" style="max-width:180px">
   <p><button class="btn" type="submit">Verify</button></p>
 </form>
 {% endblock %}

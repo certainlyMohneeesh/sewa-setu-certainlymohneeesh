@@ -4,42 +4,42 @@
 <p class="note">Correct any mistakes below. Your date of birth is your status-portal
 password (DDMMYYYY), so it changes if you change the date of birth.</p>
 <form method="post">
-  <label>Full Name of Applicant</label>
-  <input type="text" name="applicant_name" value="{{ data.get('applicant_name','') }}">
-  <label>Date of Birth (DD/MM/YYYY)</label>
-  <input type="text" name="dob" placeholder="DD/MM/YYYY" value="{{ data.get('dob','') }}">
-  <label>Gender</label>
-  <select name="gender">
+  <label for="applicant_name">Full Name of Applicant</label>
+  <input type="text" id="applicant_name" name="applicant_name" value="{{ data.get('applicant_name','') }}">
+  <label for="dob">Date of Birth (DD/MM/YYYY)</label>
+  <input type="text" id="dob" name="dob" placeholder="DD/MM/YYYY" value="{{ data.get('dob','') }}">
+  <label for="gender">Gender</label>
+  <select id="gender" name="gender">
     <option value="">--Select--</option>
     {% for g in ['Male','Female','Other'] %}
     <option {% if data.get('gender')==g %}selected{% endif %}>{{ g }}</option>
     {% endfor %}
   </select>
-  <label>Marital Status</label>
-  <select name="marital_status">
+  <label for="marital_status">Marital Status</label>
+  <select id="marital_status" name="marital_status">
     <option value="">--Select--</option>
     {% for m in ['Married','Unmarried','Widowed'] %}
     <option {% if data.get('marital_status')==m %}selected{% endif %}>{{ m }}</option>
     {% endfor %}
   </select>
-  <label>Husband's Name / Late Spouse's Name (optional)</label>
-  <input type="text" name="husband_name" value="{{ data.get('husband_name','') }}">
-  <label>Husband's Current Employer (optional)</label>
-  <input type="text" name="husband_employer" value="{{ data.get('husband_employer','') }}">
-  <label>Village / Town</label>
-  <input type="text" name="village" value="{{ data.get('village','') }}">
-  <label>Block</label>
-  <select name="block">
+  <div id="husband-name-row"><label for="husband_name">Husband's Name / Late Spouse's Name (optional)</label>
+  <input type="text" id="husband_name" name="husband_name" value="{{ data.get('husband_name','') }}"></div>
+  <div id="husband-employer-row"><label for="husband_employer">Husband's Current Employer (optional)</label>
+  <input type="text" id="husband_employer" name="husband_employer" value="{{ data.get('husband_employer','') }}"></div>
+  <label for="village">Village / Town</label>
+  <input type="text" id="village" name="village" value="{{ data.get('village','') }}">
+  <label for="block">Block</label>
+  <select id="block" name="block">
     <option value="">--Select--</option>
     {% for b in blocks %}
     <option {% if data.get('block')==b %}selected{% endif %}>{{ b }}</option>
     {% endfor %}
   </select>
-  <label>Bank Account Number</label>
-  <input type="text" name="bank_account" value="{{ data.get('bank_account','') }}">
-  <label>IFSC Code</label>
-  <input type="text" name="ifsc" value="{{ data.get('ifsc','') }}">
+  <label for="bank_account">Bank Account Number</label>
+  <input type="text" id="bank_account" name="bank_account" value="{{ data.get('bank_account','') }}">
+  <label for="ifsc">IFSC Code</label>
+  <input type="text" id="ifsc" name="ifsc" value="{{ data.get('ifsc','') }}">
   <p><button class="btn" type="submit">Save Changes</button>
-     <a href="/application/{{ app_id }}">Back</a></p>
+     <a class="btn secondary" href="/application/{{ app_id }}">Back</a></p>
 </form>
 {% endblock %}

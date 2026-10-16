@@ -1,0 +1,10 @@
+{% macro progress(n) %}
+{% set labels = ['Mobile', 'Personal', 'Address', 'Bank', 'Document', 'Declaration'] %}
+<div class="steps-label"><b>Step {{ n }} of 6:</b> {{ labels[n-1] }}</div>
+<ol class="progress" aria-label="Application progress">
+  {% for label in labels %}
+  <li class="{% if loop.index == n %}current{% elif loop.index < n %}done{% endif %}"
+      {% if loop.index == n %}aria-current="step"{% endif %}>{{ loop.index }}. {{ label }}</li>
+  {% endfor %}
+</ol>
+{% endmacro %}
