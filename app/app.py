@@ -48,7 +48,11 @@ app.secret_key = _setting("SECRET_KEY", "app", "secret_key")
 if len(app.secret_key) < 32:
     raise RuntimeError("SECRET_KEY environment variable must be set to a random "
                        "string of at least 32 characters (see scripts/gen-env.sh)")
-app.config["PERMANENT_SESSION_LIFETIME"] = 300
+app.config["PERMANENT_SESSION_LIFETIME"] = 3600   # a 6-step form takes a senior citizen a while
+# Uploads are limited to 5 MB in upload(); this only stops absurd request bodies
+# before they are read into memory.
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 4 * MAX_UPLOAD_BYTES
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"     # blocks cross-site POSTs (CSRF)
 
@@ -59,8 +63,10 @@ ADMIN_PASSWORD_HASH = _setting("ADMIN_PASSWORD_HASH", "admin", "password_hash")
 SMS_GATEWAY_URL = config.get("app", "sms_gateway_url")
 OTP_VALIDITY_SECONDS = config.getint("app", "otp_validity_seconds")
 UPLOAD_DIR = config.get("app", "upload_dir")
+# "2026-10-31 23:59" means the window closes at midnight India Standard Time, so
+# the last minute is included in full (23:59:59). Compared against now_ist().
 SCHEME_DEADLINE = datetime.strptime(config.get("pension", "scheme_deadline"),
-                                    "%Y-%m-%d %H:%M")
+                                    "%Y-%m-%d %H:%M").replace(second=59)
 MIN_AGE = config.getint("pension", "min_age")
 SLA_DAYS = config.getint("pension", "sla_days")
 
@@ -319,6 +325,97 @@ def require_application_access(cur, app_id, allow_just_submitted=False):
     abort(403)
 
 
+# ---------------------------------------------------------------------------
+# Form validation. One set of rules and messages, used by every form step, by the
+# final submission and by the edit page, so a citizen is told the real reason
+# straight away instead of "Something went wrong" at the very end.
+# ---------------------------------------------------------------------------
+
+GENDERS = ("Male", "Female", "Other")
+MARITAL_STATUSES = ("Married", "Unmarried", "Widowed")
+# The form says DD/MM/YYYY, so day-first is tried first. Month-first is only a
+# last resort, which in practice means a second number above 12 (10/25/1960).
+DOB_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y")
+ALLOWED_UPLOADS = (".pdf", ".jpg", ".jpeg", ".png")
+
+MSG_NAME = "Please enter your full name."
+MSG_DOB = "Please enter a valid Date of Birth in DD/MM/YYYY format."
+MSG_CHOICE = "Please select your gender and marital status."
+MSG_ADDRESS = "Please enter your village/town and select your block."
+MSG_BANK = "Please enter a valid Bank Account Number and IFSC Code."
+
+
+def parse_dob(raw):
+    raw = (raw or "").strip()
+    for fmt in DOB_FORMATS:
+        try:
+            dob = datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+        if dob.year >= 1900:
+            return dob
+    return None
+
+
+def age_on(dob, today):
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+
+def validate_personal(data):
+    """Returns an error message, or None when the personal details are fine."""
+    if not sanitize(data.get("applicant_name")):
+        return MSG_NAME
+    today = now_ist().date()
+    dob = parse_dob(data.get("dob"))
+    if dob is None or dob > today:
+        return MSG_DOB
+    age = age_on(dob, today)
+    if age < MIN_AGE:
+        return ("Applicant must be at least %d years of age on the date of application "
+                "(current age: %d)." % (MIN_AGE, age))
+    if data.get("gender") not in GENDERS or data.get("marital_status") not in MARITAL_STATUSES:
+        return MSG_CHOICE
+    return None
+
+
+def validate_address(data):
+    if not sanitize(data.get("village")) or not sanitize(data.get("block"), 50):
+        return MSG_ADDRESS
+    return None
+
+
+def clean_account(value):
+    return re.sub(r"[\s-]", "", str(value or ""))
+
+
+def validate_bank(data):
+    account = clean_account(data.get("bank_account"))
+    ifsc = str(data.get("ifsc") or "").strip()
+    if not (account.isdigit() and 9 <= len(account) <= 18):
+        return MSG_BANK
+    if not re.fullmatch(r"[A-Za-z0-9]{11}", ifsc):
+        return MSG_BANK
+    return None
+
+
+# step number -> (validator, form fields kept in the session for that step)
+STEP_RULES = {
+    1: (validate_personal, ("applicant_name", "dob", "gender", "marital_status",
+                            "husband_name", "husband_employer")),
+    2: (validate_address, ("village", "block")),
+    3: (validate_bank, ("bank_account", "ifsc")),
+}
+
+
+def first_form_error(data):
+    """(error, step to send the citizen back to) for the first invalid step."""
+    for step in (1, 2, 3):
+        error = STEP_RULES[step][0](data)
+        if error:
+            return error, step
+    return None, None
+
+
 def send_sms(mobile, text):
     try:
         requests.post(SMS_GATEWAY_URL + "/api/send",
@@ -328,7 +425,7 @@ def send_sms(mobile, text):
 
 
 def deadline_remaining():
-    delta = SCHEME_DEADLINE - datetime.now()
+    delta = SCHEME_DEADLINE - now_ist()
     if delta.total_seconds() <= 0:
         return None
     return int(delta.total_seconds() // 3600)
@@ -380,7 +477,14 @@ def apply():
         mobile = request.form.get("mobile", "").strip()
         captcha = request.form.get("captcha", "")
         if len(mobile) != 10 or not mobile.isdigit():
-            flash("Something went wrong. Please try again.")
+            flash("Please enter a valid 10-digit mobile number.")
+            return render_template("apply.html", captcha_q=make_captcha())
+        # Checked when the form sent an answer and we issued a question; a client
+        # that never loaded the form (no question in its session) is not blocked.
+        expected = session.get("captcha_answer")
+        if "captcha" in request.form and expected is not None and \
+                captcha.strip() != str(expected):
+            flash("Incorrect security check (CAPTCHA) answer. Please try again.")
             return render_template("apply.html", captcha_q=make_captcha())
         code = str(random.randint(100000, 999999))
         with db_cursor() as cur:
@@ -431,15 +535,31 @@ def form_step(step):
     if step not in (1, 2, 3):
         abort(404)
     if request.method == "POST":
-        data = session.get("form_data", {})
-        for k, v in request.form.items():
-            data[k] = v
+        validator, fields = STEP_RULES[step]
+        data = dict(session.get("form_data", {}))
+        for k in fields:
+            if k in request.form:
+                data[k] = request.form[k]
         session["form_data"] = data
+        error = validator(data)
+        if error:
+            flash(error)
+            return render_template("form_step%d.html" % step, data=data, blocks=BLOCKS)
         if step < 3:
             return redirect(url_for("form_step", step=step + 1))
         return redirect(url_for("upload"))
     return render_template("form_step%d.html" % step,
                            data=session.get("form_data", {}), blocks=BLOCKS)
+
+
+MSG_FILE_TOO_BIG = ("File size exceeds the 5 MB limit. Please upload a file "
+                    "smaller than 5 MB.")
+
+
+@app.errorhandler(413)
+def _request_too_large(error):
+    flash(MSG_FILE_TOO_BIG)
+    return render_template("upload.html"), 413
 
 
 @app.route("/upload", methods=["GET", "POST"])
@@ -450,21 +570,24 @@ def upload():
     if request.method == "POST":
         f = request.files.get("document")
         if f is None or f.filename == "":
-            flash("ERR_VAL_47")
+            if session.get("doc_path"):          # already uploaded: carry on
+                return redirect(url_for("declaration"))
+            flash("Please select an age proof document (PDF or JPG) to upload.")
             return render_template("upload.html")
         original = f.filename.lower()
-        content = f.read()
-        if not original.endswith(".pdf"):
-            flash("ERR_VAL_47")
+        ext = os.path.splitext(original)[1]
+        if ext not in ALLOWED_UPLOADS:
+            flash("Invalid file format. Please upload a PDF or JPG/JPEG image file.")
             return render_template("upload.html")
-        if len(content) > 102400:
-            flash("ERR_VAL_47")
+        content = f.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            flash(MSG_FILE_TOO_BIG)
             return render_template("upload.html")
         os.makedirs(UPLOAD_DIR, exist_ok=True)
         # never trust the client's filename (path traversal); a name with no
         # ASCII letters (e.g. Assamese) falls back to "document"
-        safe_name = secure_filename(original[:-4]) or "document"
-        path = os.path.join(UPLOAD_DIR, "%s_%s.pdf" % (session["verified_mobile"], safe_name))
+        safe_name = secure_filename(original[:-len(ext)]) or "document"
+        path = os.path.join(UPLOAD_DIR, "%s_%s%s" % (session["verified_mobile"], safe_name, ext))
         with open(path, "wb") as out:
             out.write(content)
         session["doc_path"] = path
@@ -479,7 +602,9 @@ def declaration():
         return redirect(url_for("apply"))
     if request.method == "POST":
         return handle_submission()
-    return render_template("declaration.html")
+    doc_path = session.get("doc_path", "")
+    return render_template("declaration.html", data=session.get("form_data", {}),
+                           doc_name=os.path.basename(doc_path).split("_", 1)[-1] if doc_path else "")
 
 
 def handle_submission():
@@ -488,50 +613,32 @@ def handle_submission():
     data = session.get("form_data", {})
     doc_path = session.get("doc_path", "")
 
-    name = sanitize(data.get("applicant_name", ""))
-    village = sanitize(data.get("village", ""))
-    block = data.get("block", "").strip()
-    gender = data.get("gender", "")
-    marital = data.get("marital_status", "")
-    husband_name = sanitize(data.get("husband_name", ""))
-    husband_employer = sanitize(data.get("husband_employer", ""))
-    bank_account = data.get("bank_account", "").strip()
+    error, back_to = first_form_error(data)
+    if error:
+        flash(error)
+        return redirect(url_for("form_step", step=back_to))
+
+    name = sanitize(data.get("applicant_name"))
+    village = sanitize(data.get("village"))
+    block = sanitize(data.get("block"), 50)
+    gender = data.get("gender")
+    marital = data.get("marital_status")
+    # A widow(er) or unmarried applicant has no husband's employer to give, so
+    # neither of these is ever required.
+    husband_name = sanitize(data.get("husband_name"))
+    husband_employer = sanitize(data.get("husband_employer"))
+    bank_account = clean_account(data.get("bank_account"))
     ifsc = data.get("ifsc", "").strip().upper()
-    dob_raw = data.get("dob", "").strip()
+    dob = parse_dob(data.get("dob"))
 
-    if not name or not village or not block or not bank_account or not dob_raw:
-        flash("Something went wrong. Please try again.")
-        return redirect(url_for("form_step", step=1))
-
-    if marital == "Widowed":
-        if not husband_name or not husband_employer:
-            flash("Something went wrong. Please try again.")
-            return redirect(url_for("form_step", step=1))
-
-    # lenient date parsing to reduce rejections (CR-2024-117)
-    dob = None
-    for fmt in ("%m/%d/%Y", "%d/%m/%Y"):
-        try:
-            dob = datetime.strptime(dob_raw, fmt).date()
-            break
-        except ValueError:
-            continue
-    if dob is None:
-        flash("Something went wrong. Please try again.")
-        return redirect(url_for("form_step", step=1))
-
-    today = date.today()
-    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-    if age < MIN_AGE:
-        flash("Applicant must be above %d years of age to be eligible." % MIN_AGE)
-        return redirect(url_for("form_step", step=1))
-
-    if datetime.now() > SCHEME_DEADLINE:
+    if now_ist() > SCHEME_DEADLINE:
         flash("The application deadline has passed.")
         return redirect(url_for("index"))
 
     with db_cursor() as cur:
-        cur.execute("SELECT count(*) FROM applications WHERE mobile = %s", (mobile,))
+        # one *active* application per person; a withdrawn one does not count
+        cur.execute("SELECT count(*) FROM applications WHERE mobile = %s "
+                    "AND status != 'WITHDRAWN'", (mobile,))
         if cur.fetchone()[0] > 0:
             flash("An application already exists for this mobile number. "
                   "Duplicate applications are not permitted.")
@@ -547,15 +654,15 @@ def handle_submission():
                RETURNING id""",
             (app_no, name, mobile, dob, gender, marital, husband_name,
              husband_employer, village, block, bank_account, ifsc, doc_path,
-             datetime.now()))
+             now_ist()))
         new_id = cur.fetchone()[0]
 
         # status portal account; password is DOB as DDMMYYYY per dept. circular
         portal_pass = dob.strftime("%d%m%Y")
-        cur.execute("SELECT count(*) FROM portal_users WHERE mobile = %s", (mobile,))
-        if cur.fetchone()[0] == 0:
-            cur.execute("INSERT INTO portal_users (mobile, password_hash) VALUES (%s,%s)",
-                        (mobile, hash_password(portal_pass)))
+        # (a citizen re-applying after a withdrawal gets the new DOB as password)
+        cur.execute("INSERT INTO portal_users (mobile, password_hash) VALUES (%s,%s) "
+                    "ON CONFLICT (mobile) DO UPDATE SET password_hash = EXCLUDED.password_hash",
+                    (mobile, hash_password(portal_pass)))
         cur.connection.commit()
         slip_row = fetch_acknowledgment_row(cur, new_id)
 
@@ -775,7 +882,8 @@ def status_login():
                 return redirect(url_for("view_application", app_id=r[0]))
             flash("No application found for this mobile number.")
             return redirect(url_for("status_login"))
-        flash("Something went wrong. Please try again.")
+        flash("Incorrect mobile number or password. Your password is your date of birth "
+              "as DDMMYYYY (for example 05101960 for 5 October 1960).")
     return render_template("status_login.html")
 
 
@@ -796,7 +904,116 @@ def view_application(app_id):
         abort(404)
     return render_template("application.html", a=row, app_id=app_id,
                            status_label=display_status(row[8]),
-                           deemed=(row[8] == "DEEMED_APPROVED"))
+                           deemed=(row[8] == "DEEMED_APPROVED"),
+                           can_change=(row[8] == "PENDING" and
+                                       not session.get("admin")))
+
+
+EDIT_COLUMNS = ("applicant_name", "dob", "gender", "marital_status", "husband_name",
+                "husband_employer", "village", "block", "bank_account", "ifsc")
+
+
+def own_pending_application(cur, app_id):
+    """The citizen's own application, still PENDING, or None (after a message).
+    403 for anyone else: staff decide applications, they do not edit them."""
+    mobile = session.get("portal_mobile")
+    if not (session.get("logged_in") and mobile) or session.get("admin"):
+        return None
+    if deem_if_overdue(cur, app_id):
+        cur.connection.commit()
+    cur.execute("SELECT mobile, status, " + ", ".join(EDIT_COLUMNS) +
+                " FROM applications WHERE id = %s", (app_id,))
+    row = cur.fetchone()
+    if not row or not safe_equals(row[0] or "", mobile):
+        abort(403)
+    if row[1] != "PENDING":
+        flash("This application is already %s and can no longer be changed."
+              % display_status(row[1]))
+        return False
+    return dict(zip(EDIT_COLUMNS, row[2:]))
+
+
+def citizen_gate():
+    if not session.get("logged_in") or session.get("admin"):
+        if session.get("admin"):
+            abort(403)
+        flash("Please login to view application status.")
+        return redirect(url_for("status_login"))
+    return None
+
+
+@app.route("/application/<int:app_id>/edit", methods=["GET", "POST"])
+def edit_application(app_id):
+    gate = citizen_gate()
+    if gate:
+        return gate
+    with db_cursor() as cur:
+        current = own_pending_application(cur, app_id)
+    if current is None:
+        abort(403)
+    if current is False:
+        return redirect(url_for("view_application", app_id=app_id))
+    data = {k: ("" if v is None else str(v)) for k, v in current.items()}
+    data["dob"] = current["dob"].strftime("%d/%m/%Y") if current["dob"] else ""
+    if request.method == "POST":
+        for k in EDIT_COLUMNS:
+            if k in request.form:
+                data[k] = request.form[k]
+        error = (validate_personal(data) or validate_address(data) or validate_bank(data))
+        if error:
+            flash(error)
+            return render_template("edit_application.html", data=data, blocks=BLOCKS,
+                                   app_id=app_id)
+        dob = parse_dob(data["dob"])
+        with db_cursor() as cur:
+            cur.execute("UPDATE applications SET applicant_name = %s, dob = %s, gender = %s, "
+                        "marital_status = %s, husband_name = %s, husband_employer = %s, "
+                        "village = %s, block = %s, bank_account = %s, ifsc = %s "
+                        "WHERE id = %s AND status = 'PENDING' AND mobile = %s",
+                        (sanitize(data["applicant_name"]), dob, data["gender"],
+                         data["marital_status"], sanitize(data.get("husband_name")),
+                         sanitize(data.get("husband_employer")), sanitize(data["village"]),
+                         sanitize(data["block"], 50), clean_account(data["bank_account"]),
+                         data["ifsc"].strip().upper(), app_id, session["portal_mobile"]))
+            changed = cur.rowcount
+            if changed:
+                # the status-portal password is the DOB, so it follows a correction
+                cur.execute("UPDATE portal_users SET password_hash = %s WHERE mobile = %s",
+                            (hash_password(dob.strftime("%d%m%Y")), session["portal_mobile"]))
+            cur.connection.commit()
+            slip_row = fetch_acknowledgment_row(cur, app_id) if changed else None
+        if not changed:
+            flash("This application can no longer be changed.")
+            return redirect(url_for("view_application", app_id=app_id))
+        invalidate_acknowledgment(app_id)
+        try:
+            save_acknowledgment(app_id, render_acknowledgment(slip_row))
+        except Exception as e:
+            app.logger.error("acknowledgment pdf for application=%d failed: %s" % (app_id, e))
+        flash("Your application has been updated. Your status-portal password is your "
+              "date of birth as DDMMYYYY: %s." % dob.strftime("%d%m%Y"))
+        return redirect(url_for("view_application", app_id=app_id))
+    return render_template("edit_application.html", data=data, blocks=BLOCKS, app_id=app_id)
+
+
+@app.route("/application/<int:app_id>/cancel", methods=["POST"])
+def cancel_application(app_id):
+    gate = citizen_gate()
+    if gate:
+        return gate
+    with db_cursor() as cur:
+        current = own_pending_application(cur, app_id)
+        if current is None:
+            abort(403)
+        if current is not False:
+            cur.execute("UPDATE applications SET status = 'WITHDRAWN', decided_at = %s, "
+                        "decided_by = 'CITIZEN' WHERE id = %s AND status = 'PENDING' "
+                        "AND mobile = %s", (now_ist(), app_id, session["portal_mobile"]))
+            cur.connection.commit()
+            invalidate_acknowledgment(app_id)
+            flash("Your application has been withdrawn. You can submit a new application "
+                  "from the home page.")
+    return redirect(url_for("view_application", app_id=app_id))
 
 
 @app.route("/ack/<int:app_id>.pdf")

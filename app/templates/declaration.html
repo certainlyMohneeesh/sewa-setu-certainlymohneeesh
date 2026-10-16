@@ -5,6 +5,25 @@
 <p>I hereby declare that the information furnished above is true to the best of my
 knowledge and belief. I understand that furnishing false information is punishable
 under applicable law and will result in cancellation of pension.</p>
+<h3>Please check your details</h3>
+<table class="tbl" id="review" style="max-width:640px">
+  <tr><th>Applicant Name</th><td>{{ data.get('applicant_name','') }}</td>
+      <td><a href="/form/1">Edit</a></td></tr>
+  <tr><th>Date of Birth</th><td>{{ data.get('dob','') }}</td><td><a href="/form/1">Edit</a></td></tr>
+  <tr><th>Gender</th><td>{{ data.get('gender','') }}</td><td><a href="/form/1">Edit</a></td></tr>
+  <tr><th>Marital Status</th><td>{{ data.get('marital_status','') }}</td>
+      <td><a href="/form/1">Edit</a></td></tr>
+  {% if data.get('husband_name') %}
+  <tr><th>Husband / Late Spouse</th><td>{{ data.get('husband_name') }}</td>
+      <td><a href="/form/1">Edit</a></td></tr>
+  {% endif %}
+  <tr><th>Village / Town</th><td>{{ data.get('village','') }}</td><td><a href="/form/2">Edit</a></td></tr>
+  <tr><th>Block</th><td>{{ data.get('block','') }}</td><td><a href="/form/2">Edit</a></td></tr>
+  <tr><th>Bank Account</th><td>{{ data.get('bank_account','') }}</td><td><a href="/form/3">Edit</a></td></tr>
+  <tr><th>IFSC</th><td>{{ data.get('ifsc','') }}</td><td><a href="/form/3">Edit</a></td></tr>
+  <tr><th>Age Proof Document</th><td>{{ doc_name or 'Not uploaded' }}</td>
+      <td><a href="/upload">Edit</a></td></tr>
+</table>
 <form method="post">
   <p><input type="checkbox" required> I agree to the above declaration.</p>
   <p><button class="btn" type="submit">Submit Application</button></p>

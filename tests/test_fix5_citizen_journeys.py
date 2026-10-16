@@ -266,7 +266,7 @@ def test_apply_without_a_captcha_field_still_works(client, mobile_factory, sms_o
 def test_step1_reports_the_exact_problem_and_keeps_the_entries(
         client, mobile_factory, otp_for, overrides, expected):
     start_session(client, mobile_factory(), otp_for)
-    form = form_values(applicant_name="Sita Devi", **overrides)
+    form = form_values(**dict({"applicant_name": "Sita Devi"}, **overrides))
     resp = client.post("/form/1", data={k: form[k] for k in (
         "applicant_name", "dob", "gender", "marital_status",
         "husband_name", "husband_employer")}, follow_redirects=True)

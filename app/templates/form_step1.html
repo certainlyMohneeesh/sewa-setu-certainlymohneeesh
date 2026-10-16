@@ -21,11 +21,12 @@
     <option {% if data.get('marital_status')=='Unmarried' %}selected{% endif %}>Unmarried</option>
     <option {% if data.get('marital_status')=='Widowed' %}selected{% endif %}>Widowed</option>
   </select>
-  <label>Husband's Name</label>
+  <label>Husband's Name / Late Spouse's Name (optional)</label>
   <input type="text" name="husband_name" value="{{ data.get('husband_name','') }}">
-  <label>Husband's Current Employer</label>
+  <label>Husband's Current Employer (optional, leave blank if widowed or not applicable)</label>
   <input type="text" name="husband_employer" value="{{ data.get('husband_employer','') }}">
-  <p class="note">Fields marked above are mandatory as applicable.</p>
+  <p class="note">Name, date of birth, gender and marital status are required. The
+  husband's details are optional.</p>
   <p><button class="btn" type="submit">Save &amp; Continue</button></p>
 </form>
 {% endblock %}
