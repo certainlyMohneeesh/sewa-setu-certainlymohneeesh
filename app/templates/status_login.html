@@ -1,12 +1,19 @@
 {% extends "base.html" %}
+{% from "_ui.html" import field %}
 {% block content %}
 <h2>Application Status Portal</h2>
 <form method="post">
-  <label for="mobile">Mobile Number</label>
+  {{ field("mobile", "Mobile Number",
+     "Type the mobile number you used when you applied.",
+     "वही मोबाइल नंबर लिखें जिससे आपने आवेदन किया था।",
+     "আবেদন কৰোঁতে ব্যৱহাৰ কৰা মোবাইল নম্বৰটো লিখক।") }}
   <input type="text" id="mobile" name="mobile" maxlength="10" inputmode="numeric"
          autocomplete="username" aria-describedby="mobile-hint">
   <p class="hint" id="mobile-hint">The 10 digit number you applied with.</p>
-  <label for="password">Password</label>
+  {{ field("password", "Password",
+     "Your password is your date of birth as eight digits: day, month, year. For example, 05101960.",
+     "आपका पासवर्ड आपकी जन्म तिथि है, आठ अंकों में: दिन, महीना, साल। जैसे 05101960।",
+     "আপোনাৰ পাছৱৰ্ড হ'ল আপোনাৰ জন্ম তাৰিখ, আঠ অংকত: দিন, মাহ, বছৰ। যেনে ০৫১০১৯৬০।") }}
   <input type="password" id="password" name="password" autocomplete="current-password"
          aria-describedby="password-help">
   <p class="hint" id="password-help">Your password is your date of birth as DDMMYYYY,

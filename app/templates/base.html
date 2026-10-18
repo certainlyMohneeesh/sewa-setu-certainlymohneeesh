@@ -13,6 +13,15 @@
   <div class="sub">Department of Social Welfare &middot; Government of Purvanchal</div>
 </div>
 <div class="band"></div>
+<div class="voicebar" id="voicebar" hidden>
+  <label for="voice-lang">Read-aloud language</label>
+  <select id="voice-lang" aria-describedby="voice-status">
+    <option value="en">English</option>
+    <option value="hi">हिन्दी (Hindi)</option>
+    <option value="as">অসমীয়া (Assamese)</option>
+  </select>
+  <span class="hint" id="voice-status" role="status" aria-live="polite"></span>
+</div>
 <div class="container" id="main" tabindex="-1">
 {% with messages = get_flashed_messages() %}
   {% for m in messages %}<div class="flash" role="alert">{{ m }}</div>{% endfor %}

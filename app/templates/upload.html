@@ -1,12 +1,16 @@
 {% extends "base.html" %}
 {% from "_progress.html" import progress %}
+{% from "_ui.html" import field %}
 {% block content %}
 {{ progress(5) }}
 <h2>Upload Age Proof Document</h2>
 <p class="note">Accepted documents: Birth certificate, School leaving certificate,
 Voter ID. Accepted formats: <b>JPG or PDF, maximum size 5 MB</b>.</p>
 <form method="post" enctype="multipart/form-data">
-  <label for="document">Select Document</label>
+  {{ field("document", "Select Document",
+     "Choose a photo or PDF of your age proof. It must be smaller than 5 MB.",
+     "अपने आयु प्रमाण की फोटो या PDF चुनें। यह 5 MB से छोटी होनी चाहिए।",
+     "আপোনাৰ বয়সৰ প্ৰমাণৰ ফটো বা PDF বাছনি কৰক। ই ৫ MB তকৈ সৰু হ'ব লাগিব।") }}
   <input type="file" id="document" name="document" aria-describedby="file-hint"
          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png">
   <p class="hint" id="file-hint" aria-live="polite"></p>

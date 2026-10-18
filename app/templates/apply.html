@@ -1,15 +1,21 @@
 {% extends "base.html" %}
 {% from "_progress.html" import progress %}
+{% from "_ui.html" import field %}
 {% block content %}
 {{ progress(1) }}
 <h2>Mobile Verification</h2>
 <form method="post">
-  <label for="mobile">Mobile Number</label>
+  {{ field("mobile", "Mobile Number",
+     "Please enter your 10-digit mobile number. The OTP will be sent to this number.",
+     "कृपया अपना 10 अंकों का मोबाइल नंबर दर्ज करें। OTP इसी नंबर पर भेजा जाएगा।",
+     "অনুগ্ৰহ কৰি আপোনাৰ ১০ অংকৰ মোবাইল নম্বৰ দিয়ক। OTP এই নম্বৰতে পঠিওৱা হ'ব।") }}
   <input type="text" id="mobile" name="mobile" maxlength="10" inputmode="numeric"
-         autocomplete="tel-national" placeholder="10 digit mobile number"
-         aria-describedby="mobile-hint">
+         autocomplete="tel-national" aria-describedby="mobile-hint">
   <p class="hint" id="mobile-hint">10 digits, without +91 or spaces.</p>
-  <label for="captcha">Security Check: What is {{ captcha_q }}?</label>
+  {{ field("captcha", "Security Check: What is " ~ captcha_q ~ "?",
+     "Add the two numbers shown and type the answer.",
+     "दिखाए गए दोनों अंकों को जोड़कर उत्तर लिखें।",
+     "দেখুওৱা দুটা সংখ্যা যোগ কৰি উত্তৰ লিখক।") }}
   <input type="text" id="captcha" name="captcha" inputmode="numeric" autocomplete="off"
          style="max-width:120px">
   <p><button class="btn" type="submit">Send OTP</button></p>

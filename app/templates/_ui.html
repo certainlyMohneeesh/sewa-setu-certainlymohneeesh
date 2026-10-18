@@ -1,0 +1,10 @@
+{# A label with a "Listen" button that reads the instruction aloud in the chosen language. #}
+{% macro field(id, text, en, hi, as_) %}
+<div class="field-head">
+  <label for="{{ id }}">{{ text }}</label>
+  <button type="button" class="listen" hidden data-say-en="{{ en }}" data-say-hi="{{ hi }}"
+          data-say-as="{{ as_ }}" aria-label="Listen to the instructions for {{ text }}">
+    <span aria-hidden="true">&#128266;</span> Listen
+  </button>
+</div>
+{% endmacro %}

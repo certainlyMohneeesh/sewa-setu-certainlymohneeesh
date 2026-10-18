@@ -31,6 +31,8 @@ from fpdf import FPDF
 from werkzeug.security import check_password_hash
 from werkzeug.utils import secure_filename
 
+import ifsc_lookup
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 config = configparser.ConfigParser()
@@ -442,6 +444,14 @@ def new_application_no():
 @app.route("/")
 def index():
     return render_template("index.html", hours_left=deadline_remaining())
+
+
+@app.route("/api/ifsc/<code>")
+def api_ifsc(code):
+    info = ifsc_lookup.lookup(code)
+    if info is None:
+        return jsonify({"error": "invalid ifsc"}), 400
+    return jsonify(info)
 
 
 @app.route("/about")

@@ -1,13 +1,20 @@
 {% extends "base.html" %}
 {% from "_progress.html" import progress %}
+{% from "_ui.html" import field %}
 {% block content %}
 {{ progress(3) }}
 <h2>Address Details</h2>
 <form method="post">
-  <label for="village">Village / Town</label>
+  {{ field("village", "Village / Town",
+     "Type the name of your village or town.",
+     "अपने गाँव या शहर का नाम लिखें।",
+     "আপোনাৰ গাঁও বা নগৰৰ নাম লিখক।") }}
   <input type="text" id="village" name="village" maxlength="100"
          value="{{ data.get('village','') }}">
-  <label for="block">Block</label>
+  {{ field("block", "Block",
+     "Choose your block from the list.",
+     "सूची से अपना ब्लॉक चुनें।",
+     "তালিকাৰ পৰা আপোনাৰ ব্লক বাছনি কৰক।") }}
   <select id="block" name="block">
     <option value="">--Select--</option>
     {% for b in blocks %}

@@ -1,18 +1,27 @@
 {% extends "base.html" %}
 {% from "_progress.html" import progress %}
+{% from "_ui.html" import field %}
 {% block content %}
 {{ progress(4) }}
 <h2>Bank Details for Pension Disbursement</h2>
 <form method="post">
-  <label for="bank_account">Bank Account Number</label>
+  {{ field("bank_account", "Bank Account Number",
+     "Type the bank account number from your passbook. Numbers only.",
+     "अपनी पासबुक से बैंक खाता संख्या लिखें। केवल अंक।",
+     "আপোনাৰ পাছবুকৰ পৰা বেংক একাউণ্ট নম্বৰ লিখক। কেৱল সংখ্যা।") }}
   <input type="text" id="bank_account" name="bank_account" inputmode="numeric" maxlength="24"
          autocomplete="off" aria-describedby="bank_account-hint"
          value="{{ data.get('bank_account','') }}">
   <p class="hint" id="bank_account-hint">Digits only, 9 to 18 digits.</p>
-  <label for="ifsc">IFSC Code</label>
+  {{ field("ifsc", "IFSC Code",
+     "Type the 11-character IFSC code printed in your passbook. The bank name will appear below.",
+     "पासबुक में छपा 11 अक्षरों का IFSC कोड लिखें। बैंक का नाम नीचे दिखेगा।",
+     "পাছবুকত ছপা ১১ আখৰৰ IFSC ক'ড লিখক। বেংকৰ নাম তলত দেখা যাব।") }}
   <input type="text" id="ifsc" name="ifsc" maxlength="11" autocomplete="off"
-         aria-describedby="ifsc-hint" value="{{ data.get('ifsc','') }}">
+         autocapitalize="characters" aria-describedby="ifsc-hint ifsc-bank"
+         value="{{ data.get('ifsc','') }}">
   <p class="hint" id="ifsc-hint">11 characters, for example SBIN0001234.</p>
+  <p class="bankname" id="ifsc-bank" aria-live="polite"></p>
   <p class="note">Pension will be credited by DBT to this account. Ensure the account
   is in the name of the applicant.</p>
   <p><button class="btn" type="submit">Save &amp; Continue</button>

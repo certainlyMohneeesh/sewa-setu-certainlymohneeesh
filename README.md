@@ -40,6 +40,21 @@ The demo mobile numbers start with `3`, which the probe cleanup does not touch. 
 `--mobile`, `--name`, `--dob` (DD/MM/YYYY), `--document` (PDF, JPG or PNG). The acknowledgment
 slip is saved to the temp directory. Admin credentials come from `.env`.
 
+### Accessibility for elderly and low-literacy citizens
+
+- Every form field has a **Listen** button that reads the instruction aloud (English, Hindi
+  or Assamese, chosen in the bar at the top) using the browser's built-in speech synthesis.
+  Nothing is recorded. If the device has no voice for the chosen language, it reads in
+  English and says so. Assamese is spoken only where the device offers an Assamese or Bengali voice.
+- The bank account number is shown in groups of four, like the passbook. The spaces are
+  removed before posting, and the server ignores them as well.
+- Typing an IFSC code shows the bank and branch. `GET /api/ifsc/<code>` answers from a bundled
+  bank-code table, and adds the branch from a public IFSC directory (`IFSC_LOOKUP_URL`, set it
+  empty to stay fully offline). Only the public IFSC code leaves the server; if the directory
+  is down the bank name still appears and the form is never blocked.
+- Inputs and buttons are at least 56 px tall, text meets WCAG AAA contrast (7:1), and every
+  field has a visible label and hint instead of placeholder text.
+
 Production server logs (Jan–Jun 2026) are provided in `logs/`.
 
 Listen to `dc-briefing.mp3` first (the DC's briefing), then read `BRIEF.md`.

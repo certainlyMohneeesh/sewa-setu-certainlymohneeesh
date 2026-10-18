@@ -7,7 +7,9 @@ password (DDMMYYYY), so it changes if you change the date of birth.</p>
   <label for="applicant_name">Full Name of Applicant</label>
   <input type="text" id="applicant_name" name="applicant_name" value="{{ data.get('applicant_name','') }}">
   <label for="dob">Date of Birth (DD/MM/YYYY)</label>
-  <input type="text" id="dob" name="dob" placeholder="DD/MM/YYYY" value="{{ data.get('dob','') }}">
+  <input type="text" id="dob" name="dob" inputmode="numeric" aria-describedby="dob-hint"
+         value="{{ data.get('dob','') }}">
+  <p class="hint" id="dob-hint">Day / Month / Year, for example 05/10/1960.</p>
   <label for="gender">Gender</label>
   <select id="gender" name="gender">
     <option value="">--Select--</option>
@@ -36,9 +38,15 @@ password (DDMMYYYY), so it changes if you change the date of birth.</p>
     {% endfor %}
   </select>
   <label for="bank_account">Bank Account Number</label>
-  <input type="text" id="bank_account" name="bank_account" value="{{ data.get('bank_account','') }}">
+  <input type="text" id="bank_account" name="bank_account" inputmode="numeric" maxlength="24"
+         autocomplete="off" aria-describedby="bank_account-hint"
+         value="{{ data.get('bank_account','') }}">
+  <p class="hint" id="bank_account-hint">Digits only, 9 to 18 digits.</p>
   <label for="ifsc">IFSC Code</label>
-  <input type="text" id="ifsc" name="ifsc" value="{{ data.get('ifsc','') }}">
+  <input type="text" id="ifsc" name="ifsc" maxlength="11" autocomplete="off"
+         aria-describedby="ifsc-hint ifsc-bank" value="{{ data.get('ifsc','') }}">
+  <p class="hint" id="ifsc-hint">11 characters, for example SBIN0001234.</p>
+  <p class="bankname" id="ifsc-bank" aria-live="polite"></p>
   <p><button class="btn" type="submit">Save Changes</button>
      <a class="btn secondary" href="/application/{{ app_id }}">Back</a></p>
 </form>

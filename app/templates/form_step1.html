@@ -1,24 +1,37 @@
 {% extends "base.html" %}
 {% from "_progress.html" import progress %}
+{% from "_ui.html" import field %}
 {% block content %}
 {{ progress(2) }}
 <h2>Personal Details</h2>
 <form method="post">
-  <label for="applicant_name">Full Name of Applicant (as per age proof document)</label>
+  {{ field("applicant_name", "Full Name of Applicant (as per age proof document)",
+     "Type your full name exactly as written on your age proof document.",
+     "अपना पूरा नाम वैसे ही लिखें जैसा आपके आयु प्रमाण दस्तावेज़ में है।",
+     "আপোনাৰ সম্পূৰ্ণ নাম বয়সৰ প্ৰমাণ নথিত যেনেকৈ লিখা আছে ঠিক তেনেকৈ লিখক।") }}
   <input type="text" id="applicant_name" name="applicant_name" maxlength="100"
          autocomplete="name" value="{{ data.get('applicant_name','') }}">
-  <label for="dob">Date of Birth (DD/MM/YYYY)</label>
-  <input type="text" id="dob" name="dob" placeholder="DD/MM/YYYY" inputmode="numeric"
+  {{ field("dob", "Date of Birth (DD/MM/YYYY)",
+     "Type your date of birth as day, month and year. For example, 5 October 1960 is 05, 10, 1960.",
+     "अपनी जन्म तिथि दिन, महीना और साल के क्रम में लिखें। जैसे 5 अक्टूबर 1960 के लिए 05/10/1960।",
+     "আপোনাৰ জন্ম তাৰিখ দিন, মাহ আৰু বছৰ ক্ৰমত লিখক। যেনে, ৫ অক্টোবৰ ১৯৬০ হ'লে ০৫/১০/১৯৬০।") }}
+  <input type="text" id="dob" name="dob" inputmode="numeric"
          autocomplete="bday" aria-describedby="dob-hint" value="{{ data.get('dob','') }}">
   <p class="hint" id="dob-hint">Day / Month / Year, for example 05/10/1960.</p>
-  <label for="gender">Gender</label>
+  {{ field("gender", "Gender",
+     "Choose your gender from the list.",
+     "सूची से अपना लिंग चुनें।",
+     "তালিকাৰ পৰা আপোনাৰ লিংগ বাছনি কৰক।") }}
   <select id="gender" name="gender">
     <option value="">--Select--</option>
     <option {% if data.get('gender')=='Male' %}selected{% endif %}>Male</option>
     <option {% if data.get('gender')=='Female' %}selected{% endif %}>Female</option>
     <option {% if data.get('gender')=='Other' %}selected{% endif %}>Other</option>
   </select>
-  <label for="marital_status">Marital Status</label>
+  {{ field("marital_status", "Marital Status",
+     "Choose your marital status: married, unmarried or widowed.",
+     "अपनी वैवाहिक स्थिति चुनें: विवाहित, अविवाहित या विधवा/विधुर।",
+     "আপোনাৰ বৈবাহিক স্থিতি বাছনি কৰক: বিবাহিত, অবিবাহিত বা বিধৱা/বিপত্নীক।") }}
   <select id="marital_status" name="marital_status">
     <option value="">--Select--</option>
     <option {% if data.get('marital_status')=='Married' %}selected{% endif %}>Married</option>
@@ -26,7 +39,10 @@
     <option {% if data.get('marital_status')=='Widowed' %}selected{% endif %}>Widowed</option>
   </select>
   <div id="husband-name-row">
-    <label for="husband_name">Husband's Name / Late Spouse's Name (Optional)</label>
+    {{ field("husband_name", "Husband's Name / Late Spouse's Name (Optional)",
+       "This is optional. You can leave it blank.",
+       "यह वैकल्पिक है। आप इसे खाली छोड़ सकते हैं।",
+       "এইটো ঐচ্ছিক। আপুনি ইয়াক খালী এৰি থ'ব পাৰে।") }}
     <input type="text" id="husband_name" name="husband_name" maxlength="100"
            value="{{ data.get('husband_name','') }}">
   </div>

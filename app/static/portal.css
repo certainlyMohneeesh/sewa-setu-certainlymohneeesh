@@ -13,31 +13,50 @@ border:1px solid #c5cad1;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 h2{color:#0b3d6e;margin-top:0}
 a{color:#0b3d6e}
 :focus-visible{outline:3px solid #f7931e;outline-offset:2px}
-.btn{display:inline-block;background:#0b3d6e;color:#fff;border:2px solid #0b3d6e;padding:12px 24px;
-font-size:1rem;cursor:pointer;text-decoration:none;border-radius:4px}
+.btn{display:inline-block;background:#0b3d6e;color:#fff;border:2px solid #0b3d6e;padding:14px 28px;
+min-height:56px;font-size:1.1rem;font-weight:bold;cursor:pointer;text-decoration:none;border-radius:4px;
+line-height:1.4}
 .btn:hover{background:#0d4a85}
 .btn.secondary{background:#fff;color:#0b3d6e}
 .btn.danger{background:#a11;border-color:#a11}
-label{display:block;margin:16px 0 4px;font-weight:bold}
-input[type=text],input[type=password],input[type=file],select{width:100%;max-width:460px;padding:10px;
-border:2px solid #667;font-size:1rem;border-radius:4px;background:#fff}
-input[aria-invalid=true]{border-color:#b00020}
-.hint{font-size:.85rem;color:#333;margin:4px 0 0;min-height:1.2em}
-.hint.bad{color:#b00020;font-weight:bold}
-.hint.good{color:#176b2c}
-.flash{background:#fdecea;border:2px solid #b00020;color:#7a0016;padding:12px 16px;margin:14px 0;
-font-weight:bold;border-radius:4px}
-.note{font-size:.9rem;color:#333}
-.footer{max-width:860px;margin:10px auto 40px;font-size:.8rem;color:#444;text-align:center;padding:0 12px}
+label{display:block;margin:16px 0 4px;font-weight:bold;font-size:1.1rem}
+.field-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 16px;margin:16px 0 4px}
+.field-head label{margin:0}
+input[type=text],input[type=password],input[type=file],select{width:100%;max-width:460px;padding:12px;
+min-height:56px;border:2px solid #445;font-size:1.1rem;border-radius:4px;background:#fff;color:#111}
+input[type=file]{padding:14px 12px}
+input[aria-invalid=true]{border-color:#9b001c;border-width:3px}
+.hint{font-size:1rem;color:#333;margin:4px 0 0;min-height:1.2em}
+.hint.bad{color:#9b001c;font-weight:bold}
+.hint.good{color:#0a4a1a}
+.bankname{font-size:1.15rem;font-weight:bold;color:#111;margin:6px 0 0;min-height:1.4em}
+.bankname.good{color:#0a4a1a;border-left:6px solid #0a4a1a;padding-left:10px}
+.bankname.bad{color:#9b001c}
+.listen{display:inline-flex;align-items:center;gap:8px;min-height:56px;min-width:56px;padding:10px 18px;
+background:#e8f0fb;color:#0b3d6e;border:2px solid #0b3d6e;border-radius:4px;font-size:1.05rem;
+font-weight:bold;cursor:pointer}
+.listen:hover{background:#d5e4f8}
+.listen[hidden]{display:none}
+.listen.speaking{background:#0a4a1a;border-color:#0a4a1a;color:#fff}
+.voicebar{max-width:860px;margin:16px auto 0;padding:10px 28px;background:#fff4d6;
+border:2px solid #7a4b00;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.voicebar[hidden]{display:none}
+.voicebar label{margin:0}
+.voicebar select{width:auto;min-width:200px}
+.voicebar .hint{margin:0;color:#111}
+.flash{background:#fdecea;border:2px solid #9b001c;color:#7a0016;padding:14px 18px;margin:14px 0;
+font-weight:bold;font-size:1.1rem;border-radius:4px}
+.note{font-size:1rem;color:#333}
+.footer{max-width:860px;margin:10px auto 40px;font-size:.9rem;color:#333;text-align:center;padding:0 12px}
 .footer a{margin:0 8px}
 table.tbl{border-collapse:collapse;width:100%}
-table.tbl td,table.tbl th{border:1px solid #99a;padding:8px 10px;font-size:.9rem;text-align:left}
+table.tbl td,table.tbl th{border:1px solid #556;padding:10px 12px;font-size:1rem;text-align:left}
 table.tbl th{background:#eef2f7}
 ol.progress{list-style:none;display:flex;gap:6px;padding:0;margin:0 0 22px;flex-wrap:wrap}
-ol.progress li{flex:1 1 90px;padding:6px 8px;font-size:.75rem;text-align:center;background:#e4e7ec;
-color:#333;border-bottom:5px solid #b8bec8}
-ol.progress li.done{border-bottom-color:#176b2c;color:#176b2c}
+ol.progress li{flex:1 1 90px;padding:8px;font-size:.9rem;text-align:center;background:#e4e7ec;
+color:#333;border-bottom:5px solid #667}
+ol.progress li.done{border-bottom-color:#0a4a1a;color:#0a4a1a}
 ol.progress li.current{background:#0b3d6e;color:#fff;border-bottom-color:#f7931e;font-weight:bold}
-.steps-label{font-size:.85rem;color:#333;margin-bottom:6px}
+.steps-label{font-size:1rem;color:#333;margin-bottom:6px}
 .hidden{display:none}
 @media (max-width:640px){html{font-size:17px}.container{margin:0;padding:16px;border:none}}
